@@ -1,0 +1,22 @@
+package:
+  name: cardano-addresses
+  dependencies:
+    - prelude
+    - effect
+    - maybe
+    - either
+    - arrays
+    - strings
+    - tuples
+    - foldable-traversable
+    - arraybuffer-types
+    - integers
+    - partial
+    - ordered-collections
+    - foreign
+    - exceptions
+    - unsafe-coerce
+    - uint
+    - arraybuffer
+  build:
+    strict: true

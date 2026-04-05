@@ -1,0 +1,7 @@
+node_modules/
+output/
+.spago/
+dist/
+.psa-stash/
+.psci_modules/
+WIP.md

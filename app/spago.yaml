@@ -1,0 +1,24 @@
+package:
+  name: cardano-addresses-browser
+  dependencies:
+    - cardano-addresses
+    - prelude
+    - effect
+    - console
+    - aff
+    - halogen
+    - maybe
+    - either
+    - arrays
+    - strings
+    - tuples
+    - foldable-traversable
+    - web-html
+    - web-dom
+    - web-events
+    - refs
+    - transformers
+    - foreign
+    - web-clipboard
+  build:
+    strict: true
