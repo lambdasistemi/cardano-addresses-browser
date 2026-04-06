@@ -342,13 +342,7 @@ renderDerivationPage state =
         "Derivation pipeline"
         [ HH.p_
             [ HH.text "Derive root, account, address, and stake keys from a BIP39 recovery phrase using the CIP-1852 path." ]
-        , HH.textarea
-            [ HP.class_ (HH.ClassName "text-input derivation-input")
-            , HP.rows 6
-            , HP.placeholder "abandon abandon ... or use the generated phrase"
-            , HP.value state.derivationInput
-            , HE.onValueInput SetDerivationInput
-            ]
+        , renderDerivationInput state
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
             [ HH.button
@@ -395,6 +389,30 @@ renderDerivationPage state =
         "Derived keys"
         [ renderDerivationResult state.privacyLevel state.derivationResult ]
     ]
+
+renderDerivationInput :: forall w. State -> HH.HTML w Action
+renderDerivationInput state =
+  if state.privacyLevel == PrivacyHidden then
+    HH.div_
+      [ HH.input
+          [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
+          , HP.type_ HP.InputPassword
+          , HP.placeholder "abandon abandon ... or use the generated phrase"
+          , HP.value state.derivationInput
+          , HE.onValueInput SetDerivationInput
+          ]
+      , HH.div
+          [ HP.class_ (HH.ClassName "privacy-note") ]
+          [ HH.p_ [ HH.text "Private mode masks the recovery phrase while keeping paste and derivation available." ] ]
+      ]
+  else
+    HH.textarea
+      [ HP.class_ (HH.ClassName "text-input derivation-input")
+      , HP.rows 6
+      , HP.placeholder "abandon abandon ... or use the generated phrase"
+      , HP.value state.derivationInput
+      , HE.onValueInput SetDerivationInput
+      ]
 
 renderScriptsPage :: forall w. HH.HTML w Action
 renderScriptsPage =
