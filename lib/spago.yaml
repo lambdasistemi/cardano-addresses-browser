@@ -1,6 +1,8 @@
 package:
   name: cardano-addresses
   dependencies:
+    - aff
+    - aff-promise
     - arrays
     - arraybuffer-types
     - either
