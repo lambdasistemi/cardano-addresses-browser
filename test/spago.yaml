@@ -1,0 +1,13 @@
+package:
+  name: cardano-addresses-test
+  dependencies:
+    - aff
+    - cardano-addresses
+    - effect
+    - maybe
+    - partial
+    - prelude
+  test:
+    main: Test.Main
+    dependencies:
+      - cardano-addresses

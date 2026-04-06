@@ -1,29 +1,47 @@
 {
   description = "cardano-address-browser — Browser-based Cardano address toolkit";
+  nixConfig = {
+    extra-substituters = [ "https://cache.iog.io" ];
+    extra-trusted-public-keys =
+      [ "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=" ];
+  };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    haskellNix.url = "github:input-output-hk/haskell.nix";
+    nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
     purescript-overlay = {
       url = "github:paolino/purescript-overlay/fix/remove-nodePackages";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, purescript-overlay }:
-    let
-      supportedSystems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-    in
-    {
-      devShells = forAllSystems (system:
+  outputs = inputs@{ self, nixpkgs, flake-parts, haskellNix, purescript-overlay, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
+      perSystem = { system, ... }:
         let
           pkgs = import nixpkgs {
             inherit system;
-            overlays = [ purescript-overlay.overlays.default ];
+            overlays = [
+              haskellNix.overlay
+              purescript-overlay.overlays.default
+            ];
           };
+          indexState = "2026-04-05T22:14:51Z";
+          haskellProject = import ./nix/project.nix {
+            inherit indexState pkgs;
+          };
+          test-vectors-json = pkgs.runCommand "cardano-addresses-browser-test-vectors" {} ''
+            mkdir -p $out
+            ${haskellProject.packages.test-vectors-exe}/bin/cardano-addresses-browser-vectors > $out/vectors.json
+          '';
         in
         {
-          default = pkgs.mkShell {
+          packages.test-vectors-exe = haskellProject.packages.test-vectors-exe;
+          packages.test-vectors = test-vectors-json;
+          devShells.default = pkgs.mkShell {
+            inputsFrom = [ haskellProject.devShells.default ];
             packages = [
               pkgs.purs
               pkgs.spago
@@ -35,6 +53,6 @@
               pkgs.just
             ];
           };
-        });
+        };
     };
 }

@@ -2,6 +2,7 @@ module App where
 
 import Prelude
 
+import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
@@ -11,7 +12,10 @@ import Data.Maybe (Maybe(..))
 import Data.String as String
 import Data.String (joinWith)
 import Effect (Effect)
-import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Aff (try)
+import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class (liftEffect)
+import Effect.Exception (message)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
@@ -40,8 +44,15 @@ data Action
   | SetMnemonicWordCount Int
   | GenerateMnemonic
   | CopyMnemonic
+  | CopyValue String
   | ToggleStatePanel
   | SetPrivacyLevel PrivacyLevel
+  | SetDerivationInput String
+  | UseGeneratedMnemonic
+  | SetAccountIndexInput String
+  | SetAddressIndexInput String
+  | SetDerivationRole Derivation.Role
+  | RunDerivation
 
 type State =
   { activePage :: Page
@@ -51,6 +62,11 @@ type State =
   , generatedMnemonic :: Maybe (Array String)
   , showStatePanel :: Boolean
   , privacyLevel :: PrivacyLevel
+  , derivationInput :: String
+  , accountIndexInput :: String
+  , addressIndexInput :: String
+  , derivationRole :: Derivation.Role
+  , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
   }
 
 initialState :: State
@@ -62,9 +78,14 @@ initialState =
   , generatedMnemonic: Nothing
   , showStatePanel: false
   , privacyLevel: PrivacyHidden
+  , derivationInput: ""
+  , accountIndexInput: "0"
+  , addressIndexInput: "0"
+  , derivationRole: Derivation.UTxOExternal
+  , derivationResult: Nothing
   }
 
-component :: forall query input output monad. MonadEffect monad => H.Component query input output monad
+component :: forall query input output monad. MonadAff monad => H.Component query input output monad
 component =
   H.mkComponent
     { initialState: const initialState
@@ -73,8 +94,10 @@ component =
     }
 
 foreign import copyToClipboard :: String -> Effect Unit
+foreign import normalizeMnemonicInput :: String -> Array String
+foreign import parseIndexInput :: String -> Int
 
-handleAction :: forall output monad. MonadEffect monad => Action -> H.HalogenM State Action () output monad Unit
+handleAction :: forall output monad. MonadAff monad => Action -> H.HalogenM State Action () output monad Unit
 handleAction = case _ of
   SelectPage page ->
     H.modify_ _ { activePage = page }
@@ -94,17 +117,57 @@ handleAction = case _ of
   GenerateMnemonic -> do
     state <- H.get
     words <- liftEffect (Mnemonic.generateMnemonic state.mnemonicWordCount)
-    H.modify_ _ { generatedMnemonic = Just words }
+    H.modify_ _
+      { generatedMnemonic = Just words
+      , derivationInput = joinWith " " words
+      , derivationResult = Nothing
+      }
   CopyMnemonic -> do
     state <- H.get
     case state.generatedMnemonic of
       Nothing -> pure unit
       Just words ->
         liftEffect (copyToClipboard (joinWith " " words))
+  CopyValue value ->
+    liftEffect (copyToClipboard value)
   ToggleStatePanel ->
     H.modify_ \state -> state { showStatePanel = not state.showStatePanel }
   SetPrivacyLevel privacyLevel ->
     H.modify_ _ { privacyLevel = privacyLevel }
+  SetDerivationInput value ->
+    H.modify_ _ { derivationInput = value, derivationResult = Nothing }
+  UseGeneratedMnemonic -> do
+    state <- H.get
+    case state.generatedMnemonic of
+      Nothing -> pure unit
+      Just words ->
+        H.modify_ _
+          { derivationInput = joinWith " " words
+          , derivationResult = Nothing
+          }
+  SetAccountIndexInput value ->
+    H.modify_ _ { accountIndexInput = value, derivationResult = Nothing }
+  SetAddressIndexInput value ->
+    H.modify_ _ { addressIndexInput = value, derivationResult = Nothing }
+  SetDerivationRole role ->
+    H.modify_ _ { derivationRole = role, derivationResult = Nothing }
+  RunDerivation -> do
+    state <- H.get
+    let
+      words = normalizeMnemonicInput state.derivationInput
+      accountIndex = parseIndexInput state.accountIndexInput
+      addressIndex = parseIndexInput state.addressIndexInput
+    if length words == 0 then
+      H.modify_ _ { derivationResult = Just (Left "Paste or generate a mnemonic before deriving keys.") }
+    else if not (Mnemonic.validateMnemonic words) then
+      H.modify_ _ { derivationResult = Just (Left "Mnemonic is invalid. Check the word list and checksum.") }
+    else do
+      result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
+      H.modify_ _
+        { derivationResult = Just case result of
+            Left err -> Left ("Key derivation failed: " <> message err)
+            Right value -> Right value
+        }
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -181,7 +244,7 @@ renderActivePage state = case state.activePage of
   Overview -> renderOverview
   Inspect -> renderInspectPage state
   Mnemonic -> renderMnemonicPage state
-  Derivation -> renderDerivationPage
+  Derivation -> renderDerivationPage state
   Scripts -> renderScriptsPage
   Library -> renderLibraryPage
 
@@ -271,22 +334,66 @@ renderMnemonicPage state =
         [ renderMnemonicResult state.privacyLevel state.generatedMnemonic ]
     ]
 
-renderDerivationPage :: forall w. HH.HTML w Action
-renderDerivationPage =
+renderDerivationPage :: forall w. State -> HH.HTML w Action
+renderDerivationPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
         "Derivation pipeline"
         [ HH.p_
-            [ HH.text "This panel will host the mnemonic -> root key -> account key -> role/index -> address key flow." ]
+            [ HH.text "Derive root, account, address, and stake keys from a BIP39 recovery phrase using the CIP-1852 path." ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input derivation-input")
+            , HP.rows 6
+            , HP.placeholder "abandon abandon ... or use the generated phrase"
+            , HP.value state.derivationInput
+            , HE.onValueInput SetDerivationInput
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> UseGeneratedMnemonic
+                ]
+                [ HH.text "Use generated phrase" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "primary-btn")
+                , HE.onClick \_ -> RunDerivation
+                ]
+                [ HH.text "Derive pipeline" ]
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "derivation-controls") ]
+            [ HH.label
+                [ HP.class_ (HH.ClassName "field-group") ]
+                [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Account index" ]
+                , HH.input
+                    [ HP.class_ (HH.ClassName "inline-input")
+                    , HP.type_ HP.InputNumber
+                    , HP.value state.accountIndexInput
+                    , HE.onValueInput SetAccountIndexInput
+                    ]
+                ]
+            , HH.label
+                [ HP.class_ (HH.ClassName "field-group") ]
+                [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Address index" ]
+                , HH.input
+                    [ HP.class_ (HH.ClassName "inline-input")
+                    , HP.type_ HP.InputNumber
+                    , HP.value state.addressIndexInput
+                    , HE.onValueInput SetAddressIndexInput
+                    ]
+                ]
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            (map (renderRoleButton state.derivationRole) derivationRoles)
         , keyValue "Standard" "CIP-1852"
-        , keyValue "Roles" "External, Internal, Stake"
+        , keyValue "Path" (derivationPathSummary state)
         ]
     , sectionCard
-        "State model"
-        [ HH.p_
-            [ HH.text "The app shell already separates navigation from content, so each pipeline step can become its own card without rewriting layout." ]
-        ]
+        "Derived keys"
+        [ renderDerivationResult state.privacyLevel state.derivationResult ]
     ]
 
 renderScriptsPage :: forall w. HH.HTML w Action
@@ -338,6 +445,9 @@ renderStatePanel state =
           , keyValue "Inspect result" (inspectStatus state.inspectResult)
           , keyValue "Mnemonic word count" (show state.mnemonicWordCount)
           , keyValue "Mnemonic phrase" (mnemonicStatus state.privacyLevel state.generatedMnemonic)
+          , keyValue "Derivation role" (Derivation.roleLabel state.derivationRole)
+          , keyValue "Derivation path" (derivationPathSummary state)
+          , keyValue "Derivation result" (derivationStatus state.derivationResult)
           ]
       ]
   else
@@ -452,6 +562,15 @@ renderWordCountButton activeCount wordCount =
     ]
     [ HH.text (show wordCount <> " words") ]
 
+renderRoleButton :: forall w. Derivation.Role -> Derivation.Role -> HH.HTML w Action
+renderRoleButton activeRole role =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeRole == role then " active" else ""))
+    , HE.onClick \_ -> SetDerivationRole role
+    ]
+    [ HH.text (Derivation.roleLabel role) ]
+
 renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
 renderMnemonicResult privacyLevel = case _ of
   Nothing ->
@@ -497,11 +616,20 @@ zipWithIndex = mapWithIndex \index word -> { index: index + 1, word }
 mnemonicWordCounts :: Array Int
 mnemonicWordCounts = [ 12, 15, 18, 21, 24 ]
 
+derivationRoles :: Array Derivation.Role
+derivationRoles = [ Derivation.UTxOExternal, Derivation.UTxOInternal, Derivation.Stake ]
+
 inspectStatus :: Maybe (Either String Inspect.AddressInfo) -> String
 inspectStatus = case _ of
   Nothing -> "idle"
   Just (Left _) -> "error"
   Just (Right info) -> "decoded: " <> info.addressStyle
+
+derivationStatus :: Maybe (Either String Derivation.DerivedKeys) -> String
+derivationStatus = case _ of
+  Nothing -> "idle"
+  Just (Left _) -> "error"
+  Just (Right _) -> "derived"
 
 mnemonicStatus :: PrivacyLevel -> Maybe (Array String) -> String
 mnemonicStatus privacyLevel = case _ of
@@ -516,6 +644,68 @@ privacyLabel :: PrivacyLevel -> String
 privacyLabel = case _ of
   PrivacyStandard -> "visible"
   PrivacyHidden -> "private"
+
+derivationPathSummary :: State -> String
+derivationPathSummary state =
+  "m / 1852' / 1815' / " <> state.accountIndexInput <> "' / "
+    <> rolePathSegment state.derivationRole
+    <> " / "
+    <> state.addressIndexInput
+
+rolePathSegment :: Derivation.Role -> String
+rolePathSegment = case _ of
+  Derivation.UTxOExternal -> "0"
+  Derivation.UTxOInternal -> "1"
+  Derivation.Stake -> "2"
+
+renderDerivationResult :: forall w. PrivacyLevel -> Maybe (Either String Derivation.DerivedKeys) -> HH.HTML w Action
+renderDerivationResult privacyLevel = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "No derivation run yet. Paste a mnemonic or reuse the generated phrase, then derive the pipeline." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right keys) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      [ renderDerivedValue privacyLevel "Root private key" keys.rootKeyBech32
+      , renderDerivedValue privacyLevel "Account private key" keys.accountKeyBech32
+      , renderDerivedValue privacyLevel "Address private key" keys.addressKeyBech32
+      , renderDerivedValue privacyLevel "Address public key" keys.addressPublicKeyBech32
+      , renderDerivedValue privacyLevel "Stake private key" keys.stakeKeyBech32
+      , renderDerivedValue privacyLevel "Stake public key" keys.stakePublicKeyBech32
+      ]
+
+renderDerivedValue :: forall w. PrivacyLevel -> String -> String -> HH.HTML w Action
+renderDerivedValue privacyLevel label value =
+  HH.div
+    [ HP.class_ (HH.ClassName "output-card") ]
+    [ HH.div
+        [ HP.class_ (HH.ClassName "output-meta") ]
+        [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "output-actions") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> CopyValue value
+                ]
+                [ HH.text "Copy" ]
+            ]
+        ]
+    , if privacyLevel == PrivacyHidden then
+        HH.div
+          [ HP.class_ (HH.ClassName "privacy-note") ]
+          [ HH.p_ [ HH.text "Value hidden in private mode. Use Copy to move it to the clipboard." ] ]
+      else
+        HH.pre
+          [ HP.class_ (HH.ClassName "code-block") ]
+          [ HH.code_ [ HH.text value ] ]
+    ]
 
 type NavItem =
   { page :: Page

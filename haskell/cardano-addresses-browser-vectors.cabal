@@ -1,0 +1,22 @@
+cabal-version:      3.0
+name:               cardano-addresses-browser-vectors
+version:            0.1.0.0
+build-type:         Simple
+license:            Apache-2.0
+author:             cardano-addresses-browser contributors
+maintainer:         noreply@example.invalid
+category:           Test
+synopsis:           Golden vector generator for cardano-addresses-browser
+
+executable cardano-addresses-browser-vectors
+  main-is:          Main.hs
+  hs-source-dirs:   app
+  default-language: GHC2021
+  ghc-options:      -Wall
+  build-depends:
+      aeson >= 2.0 && < 2.3
+    , base >= 4.18 && < 5
+    , bech32
+    , bytestring
+    , cardano-addresses
+    , text
