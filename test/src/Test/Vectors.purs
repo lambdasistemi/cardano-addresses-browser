@@ -2,12 +2,13 @@ module Test.Vectors
   ( DerivationVector
   , ExpectedAddressInfo
   , ExpectedKeys
+  , ExpectedScriptHash
   , InspectionVector
+  , ScriptHashVector
   , derivationVectors
   , inspectionVectors
+  , scriptHashVectors
   ) where
-
-import Prelude
 
 import Data.Maybe (Maybe)
 
@@ -48,6 +49,19 @@ type InspectionVector =
   , expected :: ExpectedAddressInfo
   }
 
+type ExpectedScriptHash =
+  { hashHex :: String
+  , hashBech32 :: String
+  }
+
+type ScriptHashVector =
+  { label :: String
+  , scriptCborHex :: String
+  , expected :: ExpectedScriptHash
+  }
+
 foreign import derivationVectors :: Array DerivationVector
 
 foreign import inspectionVectors :: Array InspectionVector
+
+foreign import scriptHashVectors :: Array ScriptHashVector
