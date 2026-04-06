@@ -43,6 +43,9 @@
           devShells.default = pkgs.mkShell {
             inputsFrom = [ haskellProject.devShells.default ];
             packages = [
+              pkgs.cabal-install
+              pkgs.fourmolu
+              pkgs.hlint
               pkgs.purs
               pkgs.spago
               pkgs.purs-tidy

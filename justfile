@@ -13,6 +13,20 @@ build:
 test:
   npx spago test -p cardano-addresses-test
 
+haskell-format:
+  cd haskell && fourmolu -i app/Main.hs
+
+haskell-format-check:
+  cd haskell && fourmolu --mode check app/Main.hs
+
+haskell-lint:
+  cd haskell && hlint app
+
+haskell-cabal-check:
+  cd haskell && cabal check
+
+haskell-quality: haskell-format-check haskell-lint haskell-cabal-check
+
 vectors:
   rm -rf result
   nix build .#test-vectors
@@ -42,4 +56,4 @@ format:
 check:
   npx purs-tidy check "lib/src/**/*.purs" "app/src/**/*.purs"
 
-ci: check build check-vectors test
+ci: check build haskell-quality check-vectors test

@@ -35,6 +35,9 @@ jobs:
       - name: Build
         run: just build
 
+      - name: Haskell quality
+        run: nix develop -c just haskell-quality
+
       - name: Check vectors
         run: just check-vectors
 
