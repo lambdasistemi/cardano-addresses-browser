@@ -40,6 +40,17 @@ import Cardano.Address.Derivation (
     xprvToBytes,
     xpubToBytes,
  )
+import Cardano.Address.KeyHash (
+    KeyHash,
+    KeyRole (Payment, Policy),
+ )
+import Cardano.Address.Script (
+    Script (..),
+    ScriptHash (ScriptHash),
+    scriptHashToText,
+    serializeScript,
+    toScriptHash,
+ )
 import Cardano.Address.Style.Shelley (
     AddressInfo (..),
     Credential (DelegationFromExtendedKey, PaymentFromExtendedKey),
@@ -60,17 +71,6 @@ import Cardano.Address.Style.Shelley (
     shelleyMainnet,
     shelleyTestnet,
     stakeAddress,
- )
-import Cardano.Address.Script (
-    Script (..),
-    ScriptHash (ScriptHash),
-    scriptHashToText,
-    serializeScript,
-    toScriptHash,
- )
-import Cardano.Address.KeyHash (
-    KeyHash,
-    KeyRole (Policy, Payment),
  )
 import Cardano.Mnemonic (
     SomeMnemonic,
@@ -357,8 +357,7 @@ scriptHashVectorsForMnemonic mnemonicWords =
         payment1 = hashKey Payment (toXPub <$> external1)
         paymentInternal = hashKey Payment (toXPub <$> internal0)
         stem = mnemonicStem mnemonicWords
-     in
-        [ mkScriptHashVector (stem <> "-script-sig") (RequireSignatureOf payment0)
+     in [ mkScriptHashVector (stem <> "-script-sig") (RequireSignatureOf payment0)
         , mkScriptHashVector
             (stem <> "-script-all")
             (RequireAllOf [RequireSignatureOf payment0, RequireSignatureOf payment1])
@@ -426,8 +425,7 @@ mkScriptHashVector :: Text -> Script KeyHash -> ScriptHashVector
 mkScriptHashVector label script =
     let serialized = serializeScript script
         scriptHash = toScriptHash script
-     in
-        ScriptHashVector
+     in ScriptHashVector
             { label
             , scriptCborHex = hexText serialized
             , expected =
