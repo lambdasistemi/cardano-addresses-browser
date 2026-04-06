@@ -7,6 +7,13 @@ author:             cardano-addresses-browser contributors
 maintainer:         noreply@example.invalid
 category:           Test
 synopsis:           Golden vector generator for cardano-addresses-browser
+description:
+    Generates checked-in golden fixtures for the browser workspace from
+    the upstream Haskell `cardano-addresses` implementation.
+homepage:           https://github.com/lambdasistemi/cardano-addresses-browser
+bug-reports:        https://github.com/lambdasistemi/cardano-addresses-browser/issues
+extra-source-files:
+    app/Main.hs
 
 executable cardano-addresses-browser-vectors
   main-is:          Main.hs
@@ -16,7 +23,7 @@ executable cardano-addresses-browser-vectors
   build-depends:
       aeson >= 2.0 && < 2.3
     , base >= 4.18 && < 5
-    , bech32
-    , bytestring
-    , cardano-addresses
-    , text
+    , bech32 >= 1.1 && < 1.2
+    , bytestring >= 0.11 && < 0.13
+    , cardano-addresses >= 4.0 && < 4.1
+    , text >= 2.0 && < 2.2
