@@ -12,6 +12,8 @@ import Prelude
 
 import Cardano.Address
   ( Address
+  , ChainPointer (..)
+  , NetworkDiscriminant
   , NetworkTag (..)
   , bech32
   , bech32With
@@ -41,7 +43,9 @@ import Cardano.Address.Style.Shelley
   , deriveDelegationPrivateKey
   , eitherInspectAddress
   , genMasterKeyFromMnemonic
+  , mkNetworkDiscriminant
   , paymentAddress
+  , pointerAddress
   , shelleyMainnet
   , shelleyTestnet
   , stakeAddress
@@ -173,35 +177,81 @@ mnemonics =
     , "void"
     , "what"
     ]
+  , [ "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "abandon"
+    , "about"
+    ]
   ]
 
 derivationVectorsForMnemonic :: [Text] -> [DerivationVector]
 derivationVectorsForMnemonic mnemonicWords =
-  [ mkDerivationVector mnemonicWords 0 "external" 0
-  , mkDerivationVector mnemonicWords 0 "external" 1
-  , mkDerivationVector mnemonicWords 0 "internal" 0
-  , mkDerivationVector mnemonicWords 0 "stake" 0
-  , mkDerivationVector mnemonicWords 1 "external" 0
+  concatMap (derivationVectorsForAccount mnemonicWords) [0, 1]
+
+derivationVectorsForAccount :: [Text] -> Int -> [DerivationVector]
+derivationVectorsForAccount mnemonicWords accountIx =
+  [ mkDerivationVector mnemonicWords accountIx "external" 0
+  , mkDerivationVector mnemonicWords accountIx "external" 1
+  , mkDerivationVector mnemonicWords accountIx "external" 17
+  , mkDerivationVector mnemonicWords accountIx "external" 1442
+  , mkDerivationVector mnemonicWords accountIx "internal" 0
+  , mkDerivationVector mnemonicWords accountIx "internal" 7
+  , mkDerivationVector mnemonicWords accountIx "stake" 0
   ]
 
 inspectionVectorsForMnemonic :: [Text] -> [InspectionVector]
 inspectionVectorsForMnemonic mnemonicWords =
   let rootKey = rootKeyFromMnemonic mnemonicWords
       account0 = accountKey rootKey 0
+      account1 = accountKey rootKey 1
       external0 = addressKey account0 UTxOExternal 0
+      external1 = addressKey account0 UTxOExternal 1
       internal0 = addressKey account0 UTxOInternal 0
       stake0 = delegationKey account0
+      stake1 = delegationKey account1
       paymentMainnet0 =
         paymentAddress shelleyMainnet (PaymentFromExtendedKey (toXPub <$> external0))
       paymentTestnet0 =
         paymentAddress shelleyTestnet (PaymentFromExtendedKey (toXPub <$> external0))
+      paymentCustom3 =
+        paymentAddress (unsafeNetworkDiscriminant 3) (PaymentFromExtendedKey (toXPub <$> external0))
+      paymentCustom6 =
+        paymentAddress (unsafeNetworkDiscriminant 6) (PaymentFromExtendedKey (toXPub <$> external0))
       changeMainnet0 =
         paymentAddress shelleyMainnet (PaymentFromExtendedKey (toXPub <$> internal0))
+      delegationTestnet0 =
+        delegationAddress
+          shelleyTestnet
+          (PaymentFromExtendedKey (toXPub <$> external0))
+          (DelegationFromExtendedKey (toXPub <$> stake0))
       delegationMainnet0 =
         delegationAddress
           shelleyMainnet
           (PaymentFromExtendedKey (toXPub <$> external0))
           (DelegationFromExtendedKey (toXPub <$> stake0))
+      delegationMainnet1 =
+        delegationAddress
+          shelleyMainnet
+          (PaymentFromExtendedKey (toXPub <$> external1))
+          (DelegationFromExtendedKey (toXPub <$> stake1))
+      pointerMainnet0 =
+        pointerAddress
+          shelleyMainnet
+          (PaymentFromExtendedKey (toXPub <$> external0))
+          (ChainPointer 24157 177 42)
+      pointerTestnet0 =
+        pointerAddress
+          shelleyTestnet
+          (PaymentFromExtendedKey (toXPub <$> external0))
+          (ChainPointer 1 2 3)
       rewardMainnet0 =
         unsafeRight $
           stakeAddress shelleyMainnet (DelegationFromExtendedKey (toXPub <$> stake0))
@@ -212,8 +262,14 @@ inspectionVectorsForMnemonic mnemonicWords =
    in
     [ mkInspectionVector (stem <> "-payment-mainnet") paymentMainnet0
     , mkInspectionVector (stem <> "-payment-testnet") paymentTestnet0
+    , mkInspectionVector (stem <> "-payment-custom-3") paymentCustom3
+    , mkInspectionVector (stem <> "-payment-custom-6") paymentCustom6
     , mkInspectionVector (stem <> "-change-mainnet") changeMainnet0
     , mkInspectionVector (stem <> "-delegation-mainnet") delegationMainnet0
+    , mkInspectionVector (stem <> "-delegation-testnet") delegationTestnet0
+    , mkInspectionVector (stem <> "-delegation-mainnet-alt") delegationMainnet1
+    , mkInspectionVector (stem <> "-pointer-mainnet") pointerMainnet0
+    , mkInspectionVector (stem <> "-pointer-testnet") pointerTestnet0
     , mkInspectionVector (stem <> "-reward-mainnet") rewardMainnet0
     , mkInspectionVector (stem <> "-reward-testnet") rewardTestnet0
     ]
@@ -314,6 +370,10 @@ inspectShelleyAddress address =
   case eitherInspectAddress Nothing address of
     Right (InspectAddressShelley info) -> info
     _ -> error "Expected a Shelley address"
+
+unsafeNetworkDiscriminant :: Integer -> NetworkDiscriminant Shelley
+unsafeNetworkDiscriminant tag =
+  unsafeRight (mkNetworkDiscriminant tag)
 
 hardenedAccountIndex :: Int -> Index 'Hardened 'AccountK
 hardenedAccountIndex ix =
