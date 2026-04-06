@@ -8,38 +8,32 @@ on:
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-latest
+    runs-on: nixos
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v15
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
         with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install just
-        uses: taiki-e/install-action@just
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Install dependencies
-        run: npm ci
+        run: nix develop -c npm ci
 
       - name: Check formatting
-        run: just check
+        run: nix develop -c just check
 
       - name: Build
-        run: just build
+        run: nix develop -c just build
 
       - name: Haskell quality
         run: nix develop -c just haskell-quality
 
       - name: Check vectors
-        run: just check-vectors
+        run: nix develop -c just check-vectors
 
       - name: Run tests
-        run: just test
+        run: nix develop -c just test
