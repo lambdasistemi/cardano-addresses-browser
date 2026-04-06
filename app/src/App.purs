@@ -4,8 +4,13 @@ import Prelude
 
 import Cardano.Address.Inspect as Inspect
 import Cardano.Codec.Bech32.Prefixes as Prefixes
+import Cardano.Mnemonic as Mnemonic
+import Data.Array (mapWithIndex)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.String (joinWith)
+import Effect (Effect)
+import Effect.Class (class MonadEffect, liftEffect)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
@@ -25,11 +30,16 @@ data Action
   = SelectPage Page
   | SetInspectInput String
   | RunInspect
+  | SetMnemonicWordCount Int
+  | GenerateMnemonic
+  | CopyMnemonic
 
 type State =
   { activePage :: Page
   , inspectInput :: String
   , inspectResult :: Maybe (Either String Inspect.AddressInfo)
+  , mnemonicWordCount :: Int
+  , generatedMnemonic :: Maybe (Array String)
   }
 
 initialState :: State
@@ -37,9 +47,11 @@ initialState =
   { activePage: Overview
   , inspectInput: ""
   , inspectResult: Nothing
+  , mnemonicWordCount: 24
+  , generatedMnemonic: Nothing
   }
 
-component :: forall query input output monad. H.Component query input output monad
+component :: forall query input output monad. MonadEffect monad => H.Component query input output monad
 component =
   H.mkComponent
     { initialState: const initialState
@@ -47,7 +59,9 @@ component =
     , eval: H.mkEval H.defaultEval { handleAction = handleAction }
     }
 
-handleAction :: forall output monad. Action -> H.HalogenM State Action () output monad Unit
+foreign import copyToClipboard :: String -> Effect Unit
+
+handleAction :: forall output monad. MonadEffect monad => Action -> H.HalogenM State Action () output monad Unit
 handleAction = case _ of
   SelectPage page ->
     H.modify_ _ { activePage = page }
@@ -62,6 +76,18 @@ handleAction = case _ of
             else
               Just (Inspect.eitherInspectAddress state.inspectInput)
         }
+  SetMnemonicWordCount value ->
+    H.modify_ _ { mnemonicWordCount = value }
+  GenerateMnemonic -> do
+    state <- H.get
+    words <- liftEffect (Mnemonic.generateMnemonic state.mnemonicWordCount)
+    H.modify_ _ { generatedMnemonic = Just words }
+  CopyMnemonic -> do
+    state <- H.get
+    case state.generatedMnemonic of
+      Nothing -> pure unit
+      Just words ->
+        liftEffect (copyToClipboard (joinWith " " words))
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -118,7 +144,7 @@ renderActivePage :: forall w. State -> HH.HTML w Action
 renderActivePage state = case state.activePage of
   Overview -> renderOverview
   Inspect -> renderInspectPage state
-  Mnemonic -> renderMnemonicPage
+  Mnemonic -> renderMnemonicPage state
   Derivation -> renderDerivationPage
   Scripts -> renderScriptsPage
   Library -> renderLibraryPage
@@ -184,21 +210,29 @@ renderInspectPage state =
         [ renderInspectResult state.inspectResult ]
     ]
 
-renderMnemonicPage :: forall w. HH.HTML w Action
-renderMnemonicPage =
+renderMnemonicPage :: forall w. State -> HH.HTML w Action
+renderMnemonicPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
         "Mnemonic generation"
         [ HH.p_
-            [ HH.text "The BIP39 dependency is already installed. This page will become a numbered recovery phrase grid with copy support." ]
-        , keyValue "Supported counts" "12, 15, 18, 21, 24"
+            [ HH.text "Generate an English BIP39 recovery phrase directly in the browser." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            (map (renderWordCountButton state.mnemonicWordCount) mnemonicWordCounts)
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "primary-btn")
+                , HE.onClick \_ -> GenerateMnemonic
+                ]
+                [ HH.text "Generate phrase" ]
+            ]
         ]
     , sectionCard
-        "Why it matters"
-        [ HH.p_
-            [ HH.text "This is the entry point for all derivation flows, so the app shell keeps it as a first-class panel." ]
-        ]
+        "Generated phrase"
+        [ renderMnemonicResult state.generatedMnemonic ]
     ]
 
 renderDerivationPage :: forall w. HH.HTML w Action
@@ -353,6 +387,53 @@ maybeRow label value =
   keyValue label case value of
     Just content -> content
     Nothing -> "-"
+
+renderWordCountButton :: forall w. Int -> Int -> HH.HTML w Action
+renderWordCountButton activeCount wordCount =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeCount == wordCount then " active" else ""))
+    , HE.onClick \_ -> SetMnemonicWordCount wordCount
+    ]
+    [ HH.text (show wordCount <> " words") ]
+
+renderMnemonicResult :: forall w. Maybe (Array String) -> HH.HTML w Action
+renderMnemonicResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "No mnemonic generated yet. Choose a word count and generate a phrase." ]
+      ]
+  Just words ->
+    HH.div
+      [ HP.class_ (HH.ClassName "mnemonic-result") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "action-row") ]
+          [ HH.button
+              [ HP.class_ (HH.ClassName "primary-btn")
+              , HE.onClick \_ -> CopyMnemonic
+              ]
+              [ HH.text "Copy phrase" ]
+          ]
+      , HH.div
+          [ HP.class_ (HH.ClassName "mnemonic-grid") ]
+          (map renderMnemonicWord (zipWithIndex words))
+      ]
+
+renderMnemonicWord :: forall w. { index :: Int, word :: String } -> HH.HTML w Action
+renderMnemonicWord item =
+  HH.div
+    [ HP.class_ (HH.ClassName "mnemonic-word") ]
+    [ HH.span [ HP.class_ (HH.ClassName "mnemonic-index") ] [ HH.text (show item.index <> ".") ]
+    , HH.code [ HP.class_ (HH.ClassName "mnemonic-value") ] [ HH.text item.word ]
+    ]
+
+zipWithIndex :: Array String -> Array { index :: Int, word :: String }
+zipWithIndex = mapWithIndex \index word -> { index: index + 1, word }
+
+mnemonicWordCounts :: Array Int
+mnemonicWordCounts = [ 12, 15, 18, 21, 24 ]
 
 type NavItem =
   { page :: Page

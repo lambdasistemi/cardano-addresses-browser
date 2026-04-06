@@ -24,13 +24,16 @@
         "core": {
           "dependencies": [
             "aff",
+            "arrays",
             "cardano-addresses",
+            "console",
             "effect",
             "either",
             "foreign",
             "halogen",
             "maybe",
-            "prelude"
+            "prelude",
+            "strings"
           ]
         },
         "test": {
