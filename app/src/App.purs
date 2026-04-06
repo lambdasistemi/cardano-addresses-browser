@@ -5,9 +5,10 @@ import Prelude
 import Cardano.Address.Inspect as Inspect
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
-import Data.Array (mapWithIndex)
+import Data.Array (length, mapWithIndex)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.String as String
 import Data.String (joinWith)
 import Effect (Effect)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -26,6 +27,12 @@ data Page
 
 derive instance eqPage :: Eq Page
 
+data PrivacyLevel
+  = PrivacyStandard
+  | PrivacyHidden
+
+derive instance eqPrivacyLevel :: Eq PrivacyLevel
+
 data Action
   = SelectPage Page
   | SetInspectInput String
@@ -33,6 +40,8 @@ data Action
   | SetMnemonicWordCount Int
   | GenerateMnemonic
   | CopyMnemonic
+  | ToggleStatePanel
+  | SetPrivacyLevel PrivacyLevel
 
 type State =
   { activePage :: Page
@@ -40,6 +49,8 @@ type State =
   , inspectResult :: Maybe (Either String Inspect.AddressInfo)
   , mnemonicWordCount :: Int
   , generatedMnemonic :: Maybe (Array String)
+  , showStatePanel :: Boolean
+  , privacyLevel :: PrivacyLevel
   }
 
 initialState :: State
@@ -49,6 +60,8 @@ initialState =
   , inspectResult: Nothing
   , mnemonicWordCount: 24
   , generatedMnemonic: Nothing
+  , showStatePanel: false
+  , privacyLevel: PrivacyHidden
   }
 
 component :: forall query input output monad. MonadEffect monad => H.Component query input output monad
@@ -88,6 +101,10 @@ handleAction = case _ of
       Nothing -> pure unit
       Just words ->
         liftEffect (copyToClipboard (joinWith " " words))
+  ToggleStatePanel ->
+    H.modify_ \state -> state { showStatePanel = not state.showStatePanel }
+  SetPrivacyLevel privacyLevel ->
+    H.modify_ _ { privacyLevel = privacyLevel }
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -96,8 +113,9 @@ render state =
     [ renderSidebar state.activePage
     , HH.main
         [ HP.class_ (HH.ClassName "main-panel") ]
-        [ renderTopbar state.activePage
+        [ renderTopbar state
         , renderActivePage state
+        , renderStatePanel state
         ]
     ]
 
@@ -124,19 +142,37 @@ renderSidebar activePage =
         ]
     ]
 
-renderTopbar :: forall w. Page -> HH.HTML w Action
-renderTopbar activePage =
+renderTopbar :: forall w. State -> HH.HTML w Action
+renderTopbar state =
   HH.header
     [ HP.class_ (HH.ClassName "topbar") ]
     [ HH.div_
         [ HH.p [ HP.class_ (HH.ClassName "eyebrow") ] [ HH.text "Workspace status" ]
-        , HH.h2 [ HP.class_ (HH.ClassName "page-title") ] [ HH.text (pageTitle activePage) ]
+        , HH.h2 [ HP.class_ (HH.ClassName "page-title") ] [ HH.text (pageTitle state.activePage) ]
         ]
     , HH.div
         [ HP.class_ (HH.ClassName "topbar-badges") ]
         [ badge "PureScript"
         , badge "Halogen"
         , badge "Offline-first"
+        , HH.button
+            [ HP.class_
+                (HH.ClassName ("secondary-btn" <> if state.privacyLevel == PrivacyStandard then " active" else ""))
+            , HE.onClick \_ -> SetPrivacyLevel PrivacyStandard
+            ]
+            [ HH.text "Visible" ]
+        , HH.button
+            [ HP.class_
+                (HH.ClassName ("secondary-btn" <> if state.privacyLevel == PrivacyHidden then " active" else ""))
+            , HE.onClick \_ -> SetPrivacyLevel PrivacyHidden
+            ]
+            [ HH.text "Private" ]
+        , HH.button
+            [ HP.class_
+                (HH.ClassName ("secondary-btn" <> if state.showStatePanel then " active" else ""))
+            , HE.onClick \_ -> ToggleStatePanel
+            ]
+            [ HH.text (if state.showStatePanel then "Hide state" else "Show state") ]
         ]
     ]
 
@@ -232,7 +268,7 @@ renderMnemonicPage state =
         ]
     , sectionCard
         "Generated phrase"
-        [ renderMnemonicResult state.generatedMnemonic ]
+        [ renderMnemonicResult state.privacyLevel state.generatedMnemonic ]
     ]
 
 renderDerivationPage :: forall w. HH.HTML w Action
@@ -287,6 +323,25 @@ renderLibraryPage =
         , codeBlock "import Cardano.Address.Bech32 as Bech32"
         ]
     ]
+
+renderStatePanel :: forall w. State -> HH.HTML w Action
+renderStatePanel state =
+  if state.showStatePanel then
+    HH.section
+      [ HP.class_ (HH.ClassName "card state-card") ]
+      [ HH.h3 [ HP.class_ (HH.ClassName "card-title") ] [ HH.text "App state" ]
+      , HH.div
+          [ HP.class_ (HH.ClassName "result-grid") ]
+          [ keyValue "Active page" (pageTitle state.activePage)
+          , keyValue "Privacy" (privacyLabel state.privacyLevel)
+          , keyValue "Inspect input length" (show (String.length state.inspectInput))
+          , keyValue "Inspect result" (inspectStatus state.inspectResult)
+          , keyValue "Mnemonic word count" (show state.mnemonicWordCount)
+          , keyValue "Mnemonic phrase" (mnemonicStatus state.privacyLevel state.generatedMnemonic)
+          ]
+      ]
+  else
+    HH.text ""
 
 heroCard :: forall w. String -> String -> Array String -> HH.HTML w Action
 heroCard title body bullets =
@@ -397,8 +452,8 @@ renderWordCountButton activeCount wordCount =
     ]
     [ HH.text (show wordCount <> " words") ]
 
-renderMnemonicResult :: forall w. Maybe (Array String) -> HH.HTML w Action
-renderMnemonicResult = case _ of
+renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
+renderMnemonicResult privacyLevel = case _ of
   Nothing ->
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
@@ -416,9 +471,16 @@ renderMnemonicResult = case _ of
               ]
               [ HH.text "Copy phrase" ]
           ]
-      , HH.div
-          [ HP.class_ (HH.ClassName "mnemonic-grid") ]
-          (map renderMnemonicWord (zipWithIndex words))
+      , if privacyLevel == PrivacyHidden then
+          HH.div
+            [ HP.class_ (HH.ClassName "privacy-note") ]
+            [ HH.p_
+                [ HH.text ("Phrase hidden. " <> show (length words) <> " words are available for clipboard copy.") ]
+            ]
+        else
+          HH.div
+            [ HP.class_ (HH.ClassName "mnemonic-grid") ]
+            (map renderMnemonicWord (zipWithIndex words))
       ]
 
 renderMnemonicWord :: forall w. { index :: Int, word :: String } -> HH.HTML w Action
@@ -434,6 +496,26 @@ zipWithIndex = mapWithIndex \index word -> { index: index + 1, word }
 
 mnemonicWordCounts :: Array Int
 mnemonicWordCounts = [ 12, 15, 18, 21, 24 ]
+
+inspectStatus :: Maybe (Either String Inspect.AddressInfo) -> String
+inspectStatus = case _ of
+  Nothing -> "idle"
+  Just (Left _) -> "error"
+  Just (Right info) -> "decoded: " <> info.addressStyle
+
+mnemonicStatus :: PrivacyLevel -> Maybe (Array String) -> String
+mnemonicStatus privacyLevel = case _ of
+  Nothing -> "empty"
+  Just words ->
+    if privacyLevel == PrivacyHidden then
+      show (length words) <> " words generated, hidden"
+    else
+      show (length words) <> " words generated"
+
+privacyLabel :: PrivacyLevel -> String
+privacyLabel = case _ of
+  PrivacyStandard -> "visible"
+  PrivacyHidden -> "private"
 
 type NavItem =
   { page :: Page
