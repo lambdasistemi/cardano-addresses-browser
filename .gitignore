@@ -1,7 +1,8 @@
 node_modules/
 output/
 .spago/
-dist/
+dist/app.js
+dist/cardano-addresses.js
 .psa-stash/
 .psci_modules/
 WIP.md

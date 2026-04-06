@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     purescript-overlay = {
-      url = "github:thomashoneyman/purescript-overlay";
+      url = "github:paolino/purescript-overlay/fix/remove-nodePackages";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
