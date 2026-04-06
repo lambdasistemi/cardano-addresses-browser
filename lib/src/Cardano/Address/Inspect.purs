@@ -19,7 +19,9 @@ import Data.Maybe (Maybe(..))
 type AddressInfo =
   { addressStyle :: String
   , addressType :: Int
+  , addressTypeLabel :: String
   , networkTag :: Int
+  , networkTagLabel :: String
   , stakeReference :: String
   , spendingKeyHash :: Maybe String
   , stakeKeyHash :: Maybe String
@@ -68,7 +70,9 @@ byronInfo :: Uint8Array -> AddressInfo
 byronInfo bytes =
   { addressStyle: "Byron"
   , addressType: 8
+  , addressTypeLabel: "Byron address"
   , networkTag: 0
+  , networkTagLabel: "Legacy Byron"
   , stakeReference: "none"
   , spendingKeyHash: Just (Hex.toHex bytes)
   , stakeKeyHash: Nothing

@@ -337,7 +337,9 @@ renderInspectResult = case _ of
     HH.div
       [ HP.class_ (HH.ClassName "result-grid") ]
       [ keyValue "Style" info.addressStyle
-      , keyValue "Header type" (show info.addressType)
+      , keyValue "Header type" info.addressTypeLabel
+      , keyValue "Header type code" (show info.addressType)
+      , keyValue "Network" info.networkTagLabel
       , keyValue "Network tag" (show info.networkTag)
       , keyValue "Stake reference" info.stakeReference
       , maybeRow "Spending key hash" info.spendingKeyHash

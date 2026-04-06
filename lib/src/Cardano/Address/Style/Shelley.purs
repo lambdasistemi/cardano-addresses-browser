@@ -4,6 +4,9 @@ module Cardano.Address.Style.Shelley
   , shelleyMainnet
   , shelleyTestnet
   , AddressType(..)
+  , addressTypeCode
+  , addressTypeLabel
+  , networkTagLabel
   , parseAddressInfoShelley
   ) where
 
@@ -49,7 +52,9 @@ parseAddressInfoShelley
        String
        { addressStyle :: String
        , addressType :: Int
+       , addressTypeLabel :: String
        , networkTag :: Int
+       , networkTagLabel :: String
        , stakeReference :: String
        , spendingKeyHash :: Maybe String
        , stakeKeyHash :: Maybe String
@@ -60,12 +65,12 @@ parseAddressInfoShelley bytes = do
   let
     length = Bytes.byteLength bytes
     header = Bytes.unsafeIndex bytes 0
-    addressType = zshr header 4
+    headerType = zshr header 4
     networkTag = header .&. 0x0f
     paymentHash = Hex.toHex (Bytes.slice 1 29 bytes)
     delegationHash = Hex.toHex (Bytes.slice 29 57 bytes)
 
-  parsedType <- case addressType of
+  parsedType <- case headerType of
     0 -> expectLength 57 length BaseKeyKey
     1 -> expectLength 57 length BaseScriptKey
     2 -> expectLength 57 length BaseKeyScript
@@ -80,61 +85,61 @@ parseAddressInfoShelley bytes = do
 
   pure case parsedType of
     BaseKeyKey ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         (Just paymentHash)
         Nothing
         (Just delegationHash)
         Nothing
     BaseScriptKey ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         Nothing
         (Just paymentHash)
         (Just delegationHash)
         Nothing
     BaseKeyScript ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         (Just paymentHash)
         Nothing
         Nothing
         (Just delegationHash)
     BaseScriptScript ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         Nothing
         (Just paymentHash)
         Nothing
         (Just delegationHash)
     PointerKey ->
-      baseInfo addressType networkTag "by pointer"
+      baseInfo parsedType networkTag "by pointer"
         (Just paymentHash)
         Nothing
         Nothing
         Nothing
     PointerScript ->
-      baseInfo addressType networkTag "by pointer"
+      baseInfo parsedType networkTag "by pointer"
         Nothing
         (Just paymentHash)
         Nothing
         Nothing
     EnterpriseKey ->
-      baseInfo addressType networkTag "none"
+      baseInfo parsedType networkTag "none"
         (Just paymentHash)
         Nothing
         Nothing
         Nothing
     EnterpriseScript ->
-      baseInfo addressType networkTag "none"
+      baseInfo parsedType networkTag "none"
         Nothing
         (Just paymentHash)
         Nothing
         Nothing
     RewardKey ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         Nothing
         Nothing
         (Just paymentHash)
         Nothing
     RewardScript ->
-      baseInfo addressType networkTag "by value"
+      baseInfo parsedType networkTag "by value"
         Nothing
         Nothing
         Nothing
@@ -150,8 +155,40 @@ expectMinimumLength minimumLength actual value
   | actual > minimumLength = Right value
   | otherwise = Left ("Pointer address payload is too short: got " <> show actual <> " bytes.")
 
+addressTypeCode :: AddressType -> Int
+addressTypeCode = case _ of
+  BaseKeyKey -> 0
+  BaseScriptKey -> 1
+  BaseKeyScript -> 2
+  BaseScriptScript -> 3
+  PointerKey -> 4
+  PointerScript -> 5
+  EnterpriseKey -> 6
+  EnterpriseScript -> 7
+  RewardKey -> 14
+  RewardScript -> 15
+
+addressTypeLabel :: AddressType -> String
+addressTypeLabel = case _ of
+  BaseKeyKey -> "Base address (key / key)"
+  BaseScriptKey -> "Base address (script / key)"
+  BaseKeyScript -> "Base address (key / script)"
+  BaseScriptScript -> "Base address (script / script)"
+  PointerKey -> "Pointer address (key)"
+  PointerScript -> "Pointer address (script)"
+  EnterpriseKey -> "Enterprise address (key)"
+  EnterpriseScript -> "Enterprise address (script)"
+  RewardKey -> "Reward address (key)"
+  RewardScript -> "Reward address (script)"
+
+networkTagLabel :: Int -> String
+networkTagLabel value = case value of
+  0 -> "Testnet-compatible (preview / preprod / custom)"
+  1 -> "Mainnet"
+  _ -> "Custom network (" <> show value <> ")"
+
 baseInfo
-  :: Int
+  :: AddressType
   -> Int
   -> String
   -> Maybe String
@@ -160,7 +197,9 @@ baseInfo
   -> Maybe String
   -> { addressStyle :: String
      , addressType :: Int
+     , addressTypeLabel :: String
      , networkTag :: Int
+     , networkTagLabel :: String
      , stakeReference :: String
      , spendingKeyHash :: Maybe String
      , stakeKeyHash :: Maybe String
@@ -169,8 +208,10 @@ baseInfo
      }
 baseInfo addressType networkTag stakeReference spendingKeyHash spendingScriptHash stakeKeyHash stakeScriptHash =
   { addressStyle: "Shelley"
-  , addressType
+  , addressType: addressTypeCode addressType
+  , addressTypeLabel: addressTypeLabel addressType
   , networkTag
+  , networkTagLabel: networkTagLabel networkTag
   , stakeReference
   , spendingKeyHash
   , stakeKeyHash
