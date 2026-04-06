@@ -210,12 +210,14 @@
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 18px;
+        align-items: start;
       }
 
       .card {
         display: grid;
         gap: 16px;
         min-width: 0;
+        align-self: start;
         padding: 22px;
         border: 1px solid var(--border);
         border-radius: 20px;
@@ -480,10 +482,15 @@
       .output-card {
         display: grid;
         gap: 12px;
+        min-width: 0;
         padding: 14px 16px;
         border: 1px solid var(--border-soft);
         border-radius: 14px;
         background: rgba(255, 255, 255, 0.02);
+      }
+
+      .output-card.changed {
+        animation: changed-output-fade 1.4s ease-out;
       }
 
       .output-meta {
@@ -497,6 +504,33 @@
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
+      }
+
+      .output-value {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        user-select: text;
+        cursor: default;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--border-soft);
+        background: rgba(0, 0, 0, 0.2);
+        color: #cde6ff;
+        font-family: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", monospace;
+      }
+
+      @keyframes changed-output-fade {
+        0% {
+          background: rgba(88, 166, 255, 0.18);
+          border-color: rgba(88, 166, 255, 0.52);
+        }
+
+        100% {
+          background: rgba(255, 255, 255, 0.02);
+          border-color: var(--border-soft);
+        }
       }
 
       @media (max-width: 980px) {

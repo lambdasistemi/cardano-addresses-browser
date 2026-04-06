@@ -66,6 +66,7 @@ type State =
   , accountIndexInput :: String
   , addressIndexInput :: String
   , derivationRole :: Derivation.Role
+  , previousDerivedKeys :: Maybe Derivation.DerivedKeys
   , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
   }
 
@@ -82,6 +83,7 @@ initialState =
   , accountIndexInput: "0"
   , addressIndexInput: "0"
   , derivationRole: Derivation.UTxOExternal
+  , previousDerivedKeys: Nothing
   , derivationResult: Nothing
   }
 
@@ -120,8 +122,8 @@ handleAction = case _ of
     H.modify_ _
       { generatedMnemonic = Just words
       , derivationInput = joinWith " " words
-      , derivationResult = Nothing
       }
+    refreshDerivation
   CopyMnemonic -> do
     state <- H.get
     case state.generatedMnemonic of
@@ -135,7 +137,8 @@ handleAction = case _ of
   SetPrivacyLevel privacyLevel ->
     H.modify_ _ { privacyLevel = privacyLevel }
   SetDerivationInput value ->
-    H.modify_ _ { derivationInput = value, derivationResult = Nothing }
+    H.modify_ _ { derivationInput = value }
+      *> refreshDerivation
   UseGeneratedMnemonic -> do
     state <- H.get
     case state.generatedMnemonic of
@@ -143,31 +146,44 @@ handleAction = case _ of
       Just words ->
         H.modify_ _
           { derivationInput = joinWith " " words
-          , derivationResult = Nothing
           }
+          *> refreshDerivation
   SetAccountIndexInput value ->
-    H.modify_ _ { accountIndexInput = value, derivationResult = Nothing }
+    H.modify_ _ { accountIndexInput = value }
+      *> refreshDerivation
   SetAddressIndexInput value ->
-    H.modify_ _ { addressIndexInput = value, derivationResult = Nothing }
+    H.modify_ _ { addressIndexInput = value }
+      *> refreshDerivation
   SetDerivationRole role ->
-    H.modify_ _ { derivationRole = role, derivationResult = Nothing }
-  RunDerivation -> do
-    state <- H.get
-    let
-      words = normalizeMnemonicInput state.derivationInput
-      accountIndex = parseIndexInput state.accountIndexInput
-      addressIndex = parseIndexInput state.addressIndexInput
-    if length words == 0 then
-      H.modify_ _ { derivationResult = Just (Left "Paste or generate a mnemonic before deriving keys.") }
-    else if not (Mnemonic.validateMnemonic words) then
-      H.modify_ _ { derivationResult = Just (Left "Mnemonic is invalid. Check the word list and checksum.") }
-    else do
-      result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
-      H.modify_ _
-        { derivationResult = Just case result of
-            Left err -> Left ("Key derivation failed: " <> message err)
-            Right value -> Right value
-        }
+    H.modify_ _ { derivationRole = role }
+      *> refreshDerivation
+  RunDerivation ->
+    refreshDerivation
+
+refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
+refreshDerivation = do
+  state <- H.get
+  let
+    words = normalizeMnemonicInput state.derivationInput
+    accountIndex = parseIndexInput state.accountIndexInput
+    addressIndex = parseIndexInput state.addressIndexInput
+  if length words == 0 then
+    H.modify_ _ { derivationResult = Nothing }
+  else if not (Mnemonic.validateMnemonic words) then
+    H.modify_ _ { derivationResult = Just (Left "Mnemonic is invalid. Check the word list and checksum.") }
+  else do
+    result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
+    H.modify_ _
+      { previousDerivedKeys = latestSuccessfulDerivation state
+      , derivationResult = Just case result of
+          Left err -> Left ("Key derivation failed: " <> message err)
+          Right value -> Right value
+      }
+
+latestSuccessfulDerivation :: State -> Maybe Derivation.DerivedKeys
+latestSuccessfulDerivation state = case state.derivationResult of
+  Just (Right keys) -> Just keys
+  _ -> state.previousDerivedKeys
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -350,11 +366,6 @@ renderDerivationPage state =
                 , HE.onClick \_ -> UseGeneratedMnemonic
                 ]
                 [ HH.text "Use generated phrase" ]
-            , HH.button
-                [ HP.class_ (HH.ClassName "primary-btn")
-                , HE.onClick \_ -> RunDerivation
-                ]
-                [ HH.text "Derive pipeline" ]
             ]
         , HH.div
             [ HP.class_ (HH.ClassName "derivation-controls") ]
@@ -387,7 +398,7 @@ renderDerivationPage state =
         ]
     , sectionCard
         "Derived keys"
-        [ renderDerivationResult state.privacyLevel state.derivationResult ]
+        [ renderDerivationResult state.privacyLevel state.previousDerivedKeys state.derivationResult ]
     ]
 
 renderDerivationInput :: forall w. State -> HH.HTML w Action
@@ -676,8 +687,13 @@ rolePathSegment = case _ of
   Derivation.UTxOInternal -> "1"
   Derivation.Stake -> "2"
 
-renderDerivationResult :: forall w. PrivacyLevel -> Maybe (Either String Derivation.DerivedKeys) -> HH.HTML w Action
-renderDerivationResult privacyLevel = case _ of
+renderDerivationResult
+  :: forall w
+   . PrivacyLevel
+  -> Maybe Derivation.DerivedKeys
+  -> Maybe (Either String Derivation.DerivedKeys)
+  -> HH.HTML w Action
+renderDerivationResult privacyLevel previousKeys = case _ of
   Nothing ->
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
@@ -691,18 +707,27 @@ renderDerivationResult privacyLevel = case _ of
   Just (Right keys) ->
     HH.div
       [ HP.class_ (HH.ClassName "derivation-result") ]
-      [ renderDerivedValue privacyLevel "Root private key" keys.rootKeyBech32
-      , renderDerivedValue privacyLevel "Account private key" keys.accountKeyBech32
-      , renderDerivedValue privacyLevel "Address private key" keys.addressKeyBech32
-      , renderDerivedValue privacyLevel "Address public key" keys.addressPublicKeyBech32
-      , renderDerivedValue privacyLevel "Stake private key" keys.stakeKeyBech32
-      , renderDerivedValue privacyLevel "Stake public key" keys.stakePublicKeyBech32
+      [ renderDerivedValue privacyLevel (hasChanged previousKeys _.rootKeyBech32 keys) "Root private key" keys.rootKeyBech32
+      , renderDerivedValue privacyLevel (hasChanged previousKeys _.accountKeyBech32 keys) "Account private key" keys.accountKeyBech32
+      , renderDerivedValue privacyLevel (hasChanged previousKeys _.addressKeyBech32 keys) "Address private key" keys.addressKeyBech32
+      , renderDerivedValue privacyLevel (hasChanged previousKeys _.addressPublicKeyBech32 keys) "Address public key" keys.addressPublicKeyBech32
+      , renderDerivedValue privacyLevel (hasChanged previousKeys _.stakeKeyBech32 keys) "Stake private key" keys.stakeKeyBech32
+      , renderDerivedValue privacyLevel (hasChanged previousKeys _.stakePublicKeyBech32 keys) "Stake public key" keys.stakePublicKeyBech32
       ]
 
-renderDerivedValue :: forall w. PrivacyLevel -> String -> String -> HH.HTML w Action
-renderDerivedValue privacyLevel label value =
+hasChanged
+  :: Maybe Derivation.DerivedKeys
+  -> (Derivation.DerivedKeys -> String)
+  -> Derivation.DerivedKeys
+  -> Boolean
+hasChanged previousKeys project currentKeys = case previousKeys of
+  Nothing -> false
+  Just oldKeys -> project oldKeys /= project currentKeys
+
+renderDerivedValue :: forall w. PrivacyLevel -> Boolean -> String -> String -> HH.HTML w Action
+renderDerivedValue privacyLevel changed label value =
   HH.div
-    [ HP.class_ (HH.ClassName "output-card") ]
+    [ HP.class_ (HH.ClassName ("output-card" <> if changed then " changed" else "")) ]
     [ HH.div
         [ HP.class_ (HH.ClassName "output-meta") ]
         [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]
@@ -720,9 +745,11 @@ renderDerivedValue privacyLevel label value =
           [ HP.class_ (HH.ClassName "privacy-note") ]
           [ HH.p_ [ HH.text "Value hidden in private mode. Use Copy to move it to the clipboard." ] ]
       else
-        HH.pre
-          [ HP.class_ (HH.ClassName "code-block") ]
-          [ HH.code_ [ HH.text value ] ]
+        HH.div
+          [ HP.class_ (HH.ClassName "output-value")
+          , HP.title value
+          ]
+          [ HH.text value ]
     ]
 
 type NavItem =
