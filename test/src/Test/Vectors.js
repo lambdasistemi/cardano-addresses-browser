@@ -19,3 +19,5 @@ export const inspectionVectors = fixture.inspectionVectors.map((vector) => ({
     stakeScriptHash: toMaybe(vector.expected.stakeScriptHash),
   },
 }));
+
+export const scriptHashVectors = fixture.scriptHashVectors;

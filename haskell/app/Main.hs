@@ -53,12 +53,24 @@ import Cardano.Address.Style.Shelley (
     deriveDelegationPrivateKey,
     eitherInspectAddress,
     genMasterKeyFromMnemonic,
+    hashKey,
     mkNetworkDiscriminant,
     paymentAddress,
     pointerAddress,
     shelleyMainnet,
     shelleyTestnet,
     stakeAddress,
+ )
+import Cardano.Address.Script (
+    Script (..),
+    ScriptHash (ScriptHash),
+    scriptHashToText,
+    serializeScript,
+    toScriptHash,
+ )
+import Cardano.Address.KeyHash (
+    KeyHash,
+    KeyRole (Policy, Payment),
  )
 import Cardano.Mnemonic (
     SomeMnemonic,
@@ -91,6 +103,7 @@ import Data.Text.Encoding qualified as Text
 data Vectors = Vectors
     { derivationVectors :: [DerivationVector]
     , inspectionVectors :: [InspectionVector]
+    , scriptHashVectors :: [ScriptHashVector]
     }
     deriving (Eq, Generic, Show)
 
@@ -145,6 +158,23 @@ data ExpectedAddressInfo = ExpectedAddressInfo
 
 instance ToJSON ExpectedAddressInfo
 
+data ScriptHashVector = ScriptHashVector
+    { label :: Text
+    , scriptCborHex :: Text
+    , expected :: ExpectedScriptHash
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ScriptHashVector
+
+data ExpectedScriptHash = ExpectedScriptHash
+    { hashHex :: Text
+    , hashBech32 :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ExpectedScriptHash
+
 main :: IO ()
 main = BL.putStr (encode vectors)
 
@@ -155,6 +185,8 @@ vectors =
             concatMap derivationVectorsForMnemonic mnemonics
         , inspectionVectors =
             concatMap inspectionVectorsForMnemonic mnemonics
+        , scriptHashVectors =
+            concatMap scriptHashVectorsForMnemonic mnemonics
         }
 
 mnemonics :: [[Text]]
@@ -314,6 +346,30 @@ inspectionVectorsForMnemonic mnemonicWords =
         , mkInspectionVector (stem <> "-reward-mainnet-account7") rewardMainnet7
         ]
 
+scriptHashVectorsForMnemonic :: [Text] -> [ScriptHashVector]
+scriptHashVectorsForMnemonic mnemonicWords =
+    let rootKey = rootKeyFromMnemonic mnemonicWords
+        account0 = accountKey rootKey 0
+        external0 = addressKey account0 UTxOExternal 0
+        external1 = addressKey account0 UTxOExternal 1
+        internal0 = addressKey account0 UTxOInternal 0
+        payment0 = hashKey Payment (toXPub <$> external0)
+        payment1 = hashKey Payment (toXPub <$> external1)
+        paymentInternal = hashKey Payment (toXPub <$> internal0)
+        stem = mnemonicStem mnemonicWords
+     in
+        [ mkScriptHashVector (stem <> "-script-sig") (RequireSignatureOf payment0)
+        , mkScriptHashVector
+            (stem <> "-script-all")
+            (RequireAllOf [RequireSignatureOf payment0, RequireSignatureOf payment1])
+        , mkScriptHashVector
+            (stem <> "-script-any-timelock")
+            (RequireAnyOf [RequireSignatureOf payment0, ActiveFromSlot 42, ActiveUntilSlot 500])
+        , mkScriptHashVector
+            (stem <> "-script-some")
+            (RequireSomeOf 2 [RequireSignatureOf payment0, RequireSignatureOf payment1, RequireSignatureOf paymentInternal])
+        ]
+
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector
 mkDerivationVector mnemonicWords accountIx roleName addressIx =
     let root = rootKeyFromMnemonic mnemonicWords
@@ -365,6 +421,21 @@ mkInspectionVector label address =
         , address = bech32 address
         , expected = toExpectedAddressInfo (inspectShelleyAddress address)
         }
+
+mkScriptHashVector :: Text -> Script KeyHash -> ScriptHashVector
+mkScriptHashVector label script =
+    let serialized = serializeScript script
+        scriptHash = toScriptHash script
+     in
+        ScriptHashVector
+            { label
+            , scriptCborHex = hexText serialized
+            , expected =
+                ExpectedScriptHash
+                    { hashHex = scriptHashHex scriptHash
+                    , hashBech32 = scriptHashToText scriptHash Policy Nothing
+                    }
+            }
 
 toExpectedAddressInfo :: AddressInfo -> ExpectedAddressInfo
 toExpectedAddressInfo AddressInfo{..} =
@@ -435,6 +506,9 @@ xprvAddress = unsafeMkAddress . xprvToBytes . getKey
 
 xpubAddress :: Shelley depth XPub -> Address
 xpubAddress = unsafeMkAddress . xpubToBytes . getKey
+
+scriptHashHex :: ScriptHash -> Text
+scriptHashHex (ScriptHash bytes) = hexText bytes
 
 mnemonicStem :: [Text] -> Text
 mnemonicStem mnemonicWords =

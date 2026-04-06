@@ -4,6 +4,7 @@ import Prelude
 
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
+import Cardano.Address.ScriptHash as ScriptHash
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
 import Data.Array (length, mapWithIndex)
@@ -53,6 +54,7 @@ data Action
   | SetAddressIndexInput String
   | SetDerivationRole Derivation.Role
   | RunDerivation
+  | SetScriptInput String
 
 type State =
   { activePage :: Page
@@ -68,6 +70,8 @@ type State =
   , derivationRole :: Derivation.Role
   , previousDerivedKeys :: Maybe Derivation.DerivedKeys
   , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
+  , scriptInput :: String
+  , scriptHashResult :: Maybe (Either String ScriptHash.ScriptHashResult)
   }
 
 initialState :: State
@@ -85,6 +89,8 @@ initialState =
   , derivationRole: Derivation.UTxOExternal
   , previousDerivedKeys: Nothing
   , derivationResult: Nothing
+  , scriptInput: ""
+  , scriptHashResult: Nothing
   }
 
 component :: forall query input output monad. MonadAff monad => H.Component query input output monad
@@ -97,6 +103,7 @@ component =
 
 foreign import copyToClipboard :: String -> Effect Unit
 foreign import normalizeMnemonicInput :: String -> Array String
+foreign import normalizeHexInput :: String -> String
 foreign import parseIndexInput :: String -> Int
 
 handleAction :: forall output monad. MonadAff monad => Action -> H.HalogenM State Action () output monad Unit
@@ -159,6 +166,8 @@ handleAction = case _ of
       *> refreshDerivation
   RunDerivation ->
     refreshDerivation
+  SetScriptInput value ->
+    H.modify_ _ { scriptInput = value, scriptHashResult = scriptHashStatus value }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -184,6 +193,16 @@ latestSuccessfulDerivation :: State -> Maybe Derivation.DerivedKeys
 latestSuccessfulDerivation state = case state.derivationResult of
   Just (Right keys) -> Just keys
   _ -> state.previousDerivedKeys
+
+scriptHashStatus :: String -> Maybe (Either String ScriptHash.ScriptHashResult)
+scriptHashStatus value =
+  let
+    normalized = normalizeHexInput value
+  in
+    if normalized == "" then
+      Nothing
+    else
+      Just (ScriptHash.hashNativeScriptHex normalized)
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -261,7 +280,7 @@ renderActivePage state = case state.activePage of
   Inspect -> renderInspectPage state
   Mnemonic -> renderMnemonicPage state
   Derivation -> renderDerivationPage state
-  Scripts -> renderScriptsPage
+  Scripts -> renderScriptsPage state
   Library -> renderLibraryPage
 
 renderOverview :: forall w. HH.HTML w Action
@@ -425,20 +444,27 @@ renderDerivationInput state =
       , HE.onValueInput SetDerivationInput
       ]
 
-renderScriptsPage :: forall w. HH.HTML w Action
-renderScriptsPage =
+renderScriptsPage :: forall w. State -> HH.HTML w Action
+renderScriptsPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
         "Native script tools"
         [ HH.p_
-            [ HH.text "Script parsing and hashing are still pending, but the final panel shape is reserved here." ]
-        , keyValue "Planned features" "hash, preimage, validation"
+            [ HH.text "Paste native script CBOR as hex to compute the ledger script hash locally in the browser." ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input script-input")
+            , HP.rows 6
+            , HP.placeholder "8200581c..."
+            , HP.value state.scriptInput
+            , HE.onValueInput SetScriptInput
+            ]
+        , keyValue "Accepted input" "Native script CBOR hex"
+        , keyValue "Output" "Hash hex and script1... bech32"
         ]
     , sectionCard
-        "Expression examples"
-        [ codeBlock "all [vkh1..., vkh2...]"
-        , codeBlock "some 2 [before 42, after 10, vkh1...]"
+        "Script hash"
+        [ renderScriptHashResult state.scriptHashResult
         ]
     ]
 
@@ -751,6 +777,25 @@ renderDerivedValue privacyLevel changed label value =
           ]
           [ HH.text value ]
     ]
+
+renderScriptHashResult :: forall w. Maybe (Either String ScriptHash.ScriptHashResult) -> HH.HTML w Action
+renderScriptHashResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Paste native script CBOR hex to see the derived policy hash." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right result) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-grid") ]
+      [ keyValue "Hash hex" result.hashHex
+      , keyValue "Hash bech32" result.hashBech32
+      ]
 
 type NavItem =
   { page :: Page
