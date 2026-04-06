@@ -3,9 +3,11 @@ package:
   dependencies:
     - aff
     - cardano-addresses
+    - either
     - effect
     - foreign
     - halogen
+    - maybe
     - prelude
   build:
     strict: true

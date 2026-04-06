@@ -2,7 +2,10 @@ module App where
 
 import Prelude
 
+import Cardano.Address.Inspect as Inspect
 import Cardano.Codec.Bech32.Prefixes as Prefixes
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
@@ -18,16 +21,28 @@ data Page
 
 derive instance eqPage :: Eq Page
 
-data Action = SelectPage Page
+data Action
+  = SelectPage Page
+  | SetInspectInput String
+  | RunInspect
 
 type State =
   { activePage :: Page
+  , inspectInput :: String
+  , inspectResult :: Maybe (Either String Inspect.AddressInfo)
+  }
+
+initialState :: State
+initialState =
+  { activePage: Overview
+  , inspectInput: ""
+  , inspectResult: Nothing
   }
 
 component :: forall query input output monad. H.Component query input output monad
 component =
   H.mkComponent
-    { initialState: const { activePage: Overview }
+    { initialState: const initialState
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction }
     }
@@ -36,6 +51,17 @@ handleAction :: forall output monad. Action -> H.HalogenM State Action () output
 handleAction = case _ of
   SelectPage page ->
     H.modify_ _ { activePage = page }
+  SetInspectInput value ->
+    H.modify_ _ { inspectInput = value, inspectResult = Nothing }
+  RunInspect ->
+    H.modify_ \state ->
+      state
+        { inspectResult =
+            if state.inspectInput == "" then
+              Just (Left "Paste a Cardano address to inspect.")
+            else
+              Just (Inspect.eitherInspectAddress state.inspectInput)
+        }
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -45,7 +71,7 @@ render state =
     , HH.main
         [ HP.class_ (HH.ClassName "main-panel") ]
         [ renderTopbar state.activePage
-        , renderActivePage state.activePage
+        , renderActivePage state
         ]
     ]
 
@@ -88,10 +114,10 @@ renderTopbar activePage =
         ]
     ]
 
-renderActivePage :: forall w. Page -> HH.HTML w Action
-renderActivePage = case _ of
+renderActivePage :: forall w. State -> HH.HTML w Action
+renderActivePage state = case state.activePage of
   Overview -> renderOverview
-  Inspect -> renderInspectPage
+  Inspect -> renderInspectPage state
   Mnemonic -> renderMnemonicPage
   Derivation -> renderDerivationPage
   Scripts -> renderScriptsPage
@@ -129,27 +155,33 @@ renderOverview =
         ]
     ]
 
-renderInspectPage :: forall w. HH.HTML w Action
-renderInspectPage =
+renderInspectPage :: forall w. State -> HH.HTML w Action
+renderInspectPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
         "Address inspection panel"
         [ HH.p_
-            [ HH.text "This is the next functional slice. The shell is ready for a textarea, parse button, and structured output card." ]
-        , keyValue "Target formats" "Shelley bech32, Byron base58"
-        , keyValue "Planned output" "network tag, address type, credentials"
+            [ HH.text "Paste a Cardano address and inspect its decoded structure locally in the browser." ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input inspector-input")
+            , HP.rows 6
+            , HP.placeholder "addr1... or DdzFF..."
+            , HP.value state.inspectInput
+            , HE.onValueInput SetInspectInput
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "primary-btn")
+                , HE.onClick \_ -> RunInspect
+                ]
+                [ HH.text "Inspect address" ]
+            ]
         ]
     , sectionCard
-        "Sample output shape"
-        [ codeBlock
-            "{\n\
-            \  addressStyle: \"Shelley\",\n\
-            \  networkTag: 1,\n\
-            \  spendingKeyHash: \"...\",\n\
-            \  stakeKeyHash: \"...\"\n\
-            \}"
-        ]
+        "Inspection result"
+        [ renderInspectResult state.inspectResult ]
     ]
 
 renderMnemonicPage :: forall w. HH.HTML w Action
@@ -288,6 +320,37 @@ statTile label value =
     [ HH.p [ HP.class_ (HH.ClassName "stat-label") ] [ HH.text label ]
     , HH.p [ HP.class_ (HH.ClassName "stat-value") ] [ HH.text value ]
     ]
+
+renderInspectResult :: forall w. Maybe (Either String Inspect.AddressInfo) -> HH.HTML w Action
+renderInspectResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "No address inspected yet. Supported today: Shelley bech32 with detailed decoding, Byron base58 with fallback classification." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right info) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-grid") ]
+      [ keyValue "Style" info.addressStyle
+      , keyValue "Header type" (show info.addressType)
+      , keyValue "Network tag" (show info.networkTag)
+      , keyValue "Stake reference" info.stakeReference
+      , maybeRow "Spending key hash" info.spendingKeyHash
+      , maybeRow "Spending script hash" info.spendingScriptHash
+      , maybeRow "Stake key hash" info.stakeKeyHash
+      , maybeRow "Stake script hash" info.stakeScriptHash
+      ]
+
+maybeRow :: forall w. String -> Maybe String -> HH.HTML w Action
+maybeRow label value =
+  keyValue label case value of
+    Just content -> content
+    Nothing -> "-"
 
 type NavItem =
   { page :: Page

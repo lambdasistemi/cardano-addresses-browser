@@ -9,6 +9,7 @@
             "arrays",
             "effect",
             "either",
+            "integers",
             "maybe",
             "prelude",
             "strings"
@@ -25,8 +26,10 @@
             "aff",
             "cardano-addresses",
             "effect",
+            "either",
             "foreign",
             "halogen",
+            "maybe",
             "prelude"
           ]
         },
