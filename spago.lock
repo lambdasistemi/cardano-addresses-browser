@@ -26,6 +26,7 @@
         "core": {
           "dependencies": [
             "aff",
+            "aff-promise",
             "arrays",
             "cardano-addresses",
             "console",

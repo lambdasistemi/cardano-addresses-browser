@@ -2,6 +2,7 @@ module App where
 
 import Prelude
 
+import App.Vault as Vault
 import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
@@ -11,7 +12,7 @@ import Cardano.Address.Signing as Signing
 import Cardano.Address.Script as Script
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
-import Data.Array (length, mapWithIndex)
+import Data.Array (filter, length, mapWithIndex, uncons)
 import Data.Either (Either(..))
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
@@ -35,6 +36,7 @@ data Page
   | Legacy
   | Signing
   | Scripts
+  | Vault
   | Library
 
 derive instance eqPage :: Eq Page
@@ -92,6 +94,18 @@ data Action
   | SetSignatureInput String
   | SetScriptInputMode ScriptInputMode
   | SetScriptInput String
+  | SetVaultPassphraseInput String
+  | SetVaultFileNameInput String
+  | CreateVault
+  | ImportVault
+  | ExportVault
+  | LockVault
+  | SaveGeneratedMnemonicToVault
+  | SaveRestorePhraseToVault
+  | SaveSigningKeyToVault
+  | UseVaultEntryInRestore String
+  | UseVaultEntryInSigning String
+  | DeleteVaultEntry String
 
 type State =
   { activePage :: Page
@@ -134,6 +148,13 @@ type State =
   , scriptInput :: String
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
   , scriptTemplateAnalysisResult :: Maybe (Either String Script.ScriptTemplateAnalysis)
+  , vaultPassphraseInput :: String
+  , vaultFileNameInput :: String
+  , vaultUnlocked :: Boolean
+  , vaultEntries :: Array Vault.VaultEntry
+  , vaultDirty :: Boolean
+  , vaultStatusMessage :: Maybe String
+  , vaultErrorMessage :: Maybe String
   }
 
 initialState :: State
@@ -178,6 +199,13 @@ initialState =
   , scriptInput: ""
   , scriptAnalysisResult: Nothing
   , scriptTemplateAnalysisResult: Nothing
+  , vaultPassphraseInput: ""
+  , vaultFileNameInput: "cardano-addresses.vault.json"
+  , vaultUnlocked: false
+  , vaultEntries: []
+  , vaultDirty: false
+  , vaultStatusMessage: Nothing
+  , vaultErrorMessage: Nothing
   }
 
 component :: forall query input output monad. MonadAff monad => H.Component query input output monad
@@ -372,6 +400,138 @@ handleAction = case _ of
         , scriptAnalysisResult = scriptAnalysisStatus state.scriptInputMode value
         , scriptTemplateAnalysisResult = scriptTemplateAnalysisStatus state.scriptInputMode value
         }
+  SetVaultPassphraseInput value ->
+    H.modify_ _ { vaultPassphraseInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  SetVaultFileNameInput value ->
+    H.modify_ _ { vaultFileNameInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  CreateVault -> do
+    state <- H.get
+    if String.trim state.vaultPassphraseInput == "" then
+      H.modify_ _ { vaultErrorMessage = Just "Enter a vault passphrase before creating a vault.", vaultStatusMessage = Nothing }
+    else
+      H.modify_ _
+        { vaultUnlocked = true
+        , vaultEntries = []
+        , vaultDirty = true
+        , vaultErrorMessage = Nothing
+        , vaultStatusMessage = Just "New vault unlocked in memory. Export it to save the encrypted file."
+        }
+  ImportVault -> do
+    state <- H.get
+    if String.trim state.vaultPassphraseInput == "" then
+      H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before importing a vault file.", vaultStatusMessage = Nothing }
+    else do
+      result <- liftAff (try (Vault.importVaultFile state.vaultPassphraseInput))
+      case result of
+        Left err ->
+          H.modify_ _ { vaultErrorMessage = Just ("Vault import failed: " <> message err), vaultStatusMessage = Nothing }
+        Right imported ->
+          if imported.canceled then
+            H.modify_ _ { vaultErrorMessage = Nothing, vaultStatusMessage = Just "Vault import canceled." }
+          else
+            H.modify_ _
+              { vaultUnlocked = true
+              , vaultEntries = imported.entries
+              , vaultFileNameInput = imported.fileName
+              , vaultDirty = false
+              , vaultErrorMessage = Nothing
+              , vaultStatusMessage = Just ("Unlocked vault " <> imported.fileName <> ".")
+              }
+  ExportVault -> do
+    state <- H.get
+    if not state.vaultUnlocked then
+      H.modify_ _ { vaultErrorMessage = Just "Create or unlock a vault before exporting it.", vaultStatusMessage = Nothing }
+    else if String.trim state.vaultPassphraseInput == "" then
+      H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before exporting the vault file.", vaultStatusMessage = Nothing }
+    else do
+      let
+        fileName = normalizedVaultFileName state.vaultFileNameInput
+      result <- liftAff (try (Vault.exportVaultFile fileName state.vaultPassphraseInput state.vaultEntries))
+      case result of
+        Left err ->
+          H.modify_ _ { vaultErrorMessage = Just ("Vault export failed: " <> message err), vaultStatusMessage = Nothing }
+        Right _ ->
+          H.modify_ _
+            { vaultFileNameInput = fileName
+            , vaultDirty = false
+            , vaultErrorMessage = Nothing
+            , vaultStatusMessage = Just ("Encrypted vault exported as " <> fileName <> ".")
+            }
+  LockVault ->
+    H.modify_ _
+      { vaultUnlocked = false
+      , vaultEntries = []
+      , vaultDirty = false
+      , vaultErrorMessage = Nothing
+      , vaultStatusMessage = Just "Vault locked. Decrypted entries were cleared from memory."
+      }
+  SaveGeneratedMnemonicToVault -> do
+    state <- H.get
+    case state.generatedMnemonic of
+      Nothing ->
+        H.modify_ _ { vaultErrorMessage = Just "Generate a mnemonic before saving it to the vault.", vaultStatusMessage = Nothing }
+      Just words ->
+        saveVaultEntry
+          Vault.VaultMnemonic
+          (show (length words) <> "-word mnemonic")
+          (joinWith " " words)
+  SaveRestorePhraseToVault -> do
+    state <- H.get
+    let
+      phrase = joinWith " " (normalizeMnemonicInput state.derivationInput)
+    if phrase == "" then
+      H.modify_ _ { vaultErrorMessage = Just "Paste or hand off a recovery phrase before saving it to the vault.", vaultStatusMessage = Nothing }
+    else
+      saveVaultEntry
+        Vault.VaultMnemonic
+        (restoreFamilyLabel state.restoreFamily <> " restore phrase")
+        phrase
+  SaveSigningKeyToVault -> do
+    state <- H.get
+    let
+      key = String.trim state.signingKeyInput
+    if key == "" then
+      H.modify_ _ { vaultErrorMessage = Just "Paste a signing key before saving it to the vault.", vaultStatusMessage = Nothing }
+    else
+      saveVaultEntry Vault.VaultSigningKey "Signing key" key
+  UseVaultEntryInRestore entryId -> do
+    state <- H.get
+    case lookupVaultEntry entryId state.vaultEntries of
+      Nothing ->
+        H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
+      Just entry ->
+        H.modify_ _ { derivationInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Restore.") }
+          *> refreshDerivation
+  UseVaultEntryInSigning entryId -> do
+    state <- H.get
+    case lookupVaultEntry entryId state.vaultEntries of
+      Nothing ->
+        H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
+      Just entry ->
+        H.modify_ _ { signingKeyInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Signing.") }
+          *> refreshSigning
+  DeleteVaultEntry entryId ->
+    H.modify_ \state ->
+      state
+        { vaultEntries = filter (\entry -> entry.id /= entryId) state.vaultEntries
+        , vaultDirty = true
+        , vaultErrorMessage = Nothing
+        , vaultStatusMessage = Just "Removed entry from the unlocked vault."
+        }
+
+saveVaultEntry :: forall output monad. MonadAff monad => Vault.VaultKind -> String -> String -> H.HalogenM State Action () output monad Unit
+saveVaultEntry kind label value = do
+  state <- H.get
+  if not state.vaultUnlocked then
+    H.modify_ _ { vaultErrorMessage = Just "Unlock or create a vault before saving secrets into it.", vaultStatusMessage = Nothing }
+  else do
+    entry <- liftEffect (Vault.createVaultEntry kind label value)
+    H.modify_ _
+      { vaultEntries = state.vaultEntries <> [ entry ]
+      , vaultDirty = true
+      , vaultErrorMessage = Nothing
+      , vaultStatusMessage = Just ("Saved " <> entry.label <> " into the unlocked vault.")
+      }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -624,6 +784,7 @@ renderActivePage state = case state.activePage of
   Legacy -> renderLegacyPage state
   Signing -> renderSigningPage state
   Scripts -> renderScriptsPage state
+  Vault -> renderVaultPage state
   Library -> renderLibraryPage
 
 renderOverview :: forall w. HH.HTML w Action
@@ -720,7 +881,14 @@ renderMnemonicPage state =
                 , HE.onClick \_ -> UseGeneratedMnemonic
                 ]
                 [ HH.text "Use in Restore" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HP.disabled (not state.vaultUnlocked || state.generatedMnemonic == Nothing)
+                , HE.onClick \_ -> SaveGeneratedMnemonicToVault
+                ]
+                [ HH.text "Save to vault" ]
             ]
+        , renderVaultInlineStatus state
         ]
     , sectionCard
         "Generated phrase"
@@ -746,6 +914,7 @@ renderDerivationPage state =
             [ HH.p_
                 [ HH.text "Mnemonic generation is separate again. Use the Mnemonic page when you want to create or review a phrase, then paste or hand it off here." ]
             ]
+        , renderVaultMnemonicShelf state
         , renderDerivationInput state
         , HH.div
             [ HP.class_ (HH.ClassName "derivation-controls") ]
@@ -839,6 +1008,16 @@ renderDerivationPage state =
             HH.text ""
         , keyValue "Mode" (restoreModeSummary state.restoreFamily)
         , keyValue "Path" (restorePathSummary state)
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HP.disabled (not state.vaultUnlocked || joinWith " " (normalizeMnemonicInput state.derivationInput) == "")
+                , HE.onClick \_ -> SaveRestorePhraseToVault
+                ]
+                [ HH.text "Save phrase to vault" ]
+            ]
+        , renderVaultInlineStatus state
         ]
     , sectionCard
         (restoreOutputTitle state.restoreFamily)
@@ -984,7 +1163,14 @@ renderSigningPage state =
                 , HE.onClick \_ -> ToggleSigningKeyVisibility
                 ]
                 [ HH.text (if state.showSigningKey then "Hide signing key" else "Show signing key") ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HP.disabled (not state.vaultUnlocked || String.trim state.signingKeyInput == "")
+                , HE.onClick \_ -> SaveSigningKeyToVault
+                ]
+                [ HH.text "Save signing key to vault" ]
             ]
+        , renderVaultSigningShelf state
         , if state.showSigningKey then
             HH.textarea
               [ HP.class_ (HH.ClassName "text-input inspector-input")
@@ -1002,6 +1188,7 @@ renderSigningPage state =
               , HE.onValueInput SetSigningKeyInput
               ]
         , keyValue "Accepted signing keys" "root_xsk, acct_xsk, addr_xsk, stake_xsk"
+        , renderVaultInlineStatus state
         ]
     , sectionCard
         "Signature"
@@ -1075,6 +1262,70 @@ renderScriptsPage state =
             ScriptInputTemplate -> renderScriptTemplateAnalysisResult state.scriptTemplateAnalysisResult
             _ -> renderScriptAnalysisResult state.scriptAnalysisResult
         ]
+    ]
+
+renderVaultPage :: forall w. State -> HH.HTML w Action
+renderVaultPage state =
+  HH.div
+    [ HP.class_ (HH.ClassName "page-grid") ]
+    [ sectionCard
+        "Encrypted vault"
+        [ HH.p_
+            [ HH.text "Create or unlock an encrypted vault file. Secrets stay in memory while unlocked and are only persisted to disk as encrypted JSON." ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault passphrase" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
+                , HP.type_ HP.InputPassword
+                , HP.placeholder "Strong passphrase for the vault file"
+                , HP.value state.vaultPassphraseInput
+                , HE.onValueInput SetVaultPassphraseInput
+                ]
+            ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault file name" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "inline-input")
+                , HP.placeholder "cardano-addresses.vault.json"
+                , HP.value state.vaultFileNameInput
+                , HE.onValueInput SetVaultFileNameInput
+                ]
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "primary-btn")
+                , HE.onClick \_ -> CreateVault
+                ]
+                [ HH.text "Create vault" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> ImportVault
+                ]
+                [ HH.text "Import vault file" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HP.disabled (not state.vaultUnlocked)
+                , HE.onClick \_ -> ExportVault
+                ]
+                [ HH.text "Export vault file" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HP.disabled (not state.vaultUnlocked)
+                , HE.onClick \_ -> LockVault
+                ]
+                [ HH.text "Lock vault" ]
+            ]
+        , keyValue "State" (vaultStateLabel state)
+        , keyValue "Entries" (show (length state.vaultEntries))
+        , keyValue "Persisted" (if state.vaultDirty then "No, export required" else "Yes or unchanged")
+        , renderVaultInlineStatus state
+        ]
+    , sectionCard
+        "Unlocked entries"
+        [ renderVaultEntries state ]
     ]
 
 renderLibraryPage :: forall w. HH.HTML w Action
@@ -2022,6 +2273,148 @@ renderLegacyResult = case _ of
           ]
       ]
 
+renderVaultInlineStatus :: forall w. State -> HH.HTML w Action
+renderVaultInlineStatus state = case state.vaultErrorMessage, state.vaultStatusMessage of
+  Just err, _ ->
+    HH.div [ HP.class_ (HH.ClassName "result-error") ] [ HH.text err ]
+  Nothing, Just messageText ->
+    HH.div [ HP.class_ (HH.ClassName "privacy-note") ] [ HH.p_ [ HH.text messageText ] ]
+  Nothing, Nothing ->
+    HH.text ""
+
+renderVaultMnemonicShelf :: forall w. State -> HH.HTML w Action
+renderVaultMnemonicShelf state =
+  let
+    entries = mnemonicVaultEntries state.vaultEntries
+  in
+    if not state.vaultUnlocked then
+      HH.div
+        [ HP.class_ (HH.ClassName "privacy-note") ]
+        [ HH.p_ [ HH.text "Unlock a vault to reuse stored recovery phrases without copy and paste." ] ]
+    else if length entries == 0 then
+      HH.div
+        [ HP.class_ (HH.ClassName "privacy-note") ]
+        [ HH.p_ [ HH.text "No mnemonic entries in the unlocked vault yet." ] ]
+    else
+      HH.div
+        [ HP.class_ (HH.ClassName "vault-shelf") ]
+        (map renderRestoreVaultEntry entries)
+
+renderVaultSigningShelf :: forall w. State -> HH.HTML w Action
+renderVaultSigningShelf state =
+  let
+    entries = signingKeyVaultEntries state.vaultEntries
+  in
+    if not state.vaultUnlocked then
+      HH.div
+        [ HP.class_ (HH.ClassName "privacy-note") ]
+        [ HH.p_ [ HH.text "Unlock a vault to load signing keys directly into this tool." ] ]
+    else if length entries == 0 then
+      HH.div
+        [ HP.class_ (HH.ClassName "privacy-note") ]
+        [ HH.p_ [ HH.text "No signing-key entries in the unlocked vault yet." ] ]
+    else
+      HH.div
+        [ HP.class_ (HH.ClassName "vault-shelf") ]
+        (map renderSigningVaultEntry entries)
+
+renderVaultEntries :: forall w. State -> HH.HTML w Action
+renderVaultEntries state =
+  if not state.vaultUnlocked then
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_ [ HH.text "Create or unlock a vault to inspect its entries." ] ]
+  else if length state.vaultEntries == 0 then
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_ [ HH.text "The unlocked vault is empty. Save a mnemonic or signing key from the feature pages." ] ]
+  else
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      (map renderVaultEntryCard state.vaultEntries)
+
+renderVaultEntryCard :: forall w. Vault.VaultEntry -> HH.HTML w Action
+renderVaultEntryCard entry =
+  HH.div
+    [ HP.class_ (HH.ClassName "output-card") ]
+    [ HH.div
+        [ HP.class_ (HH.ClassName "output-meta") ]
+        [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text entry.label ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "output-actions") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> DeleteVaultEntry entry.id
+                ]
+                [ HH.text "Delete" ]
+            ]
+        ]
+    , HH.div [ HP.class_ (HH.ClassName "result-grid") ]
+        [ keyValue "Kind" (vaultEntryKindLabel entry.kind)
+        , keyValue "Created" entry.createdAt
+        ]
+    ]
+
+renderRestoreVaultEntry :: forall w. Vault.VaultEntry -> HH.HTML w Action
+renderRestoreVaultEntry entry =
+  HH.div
+    [ HP.class_ (HH.ClassName "vault-entry") ]
+    [ HH.div_
+        [ HH.strong_ [ HH.text entry.label ]
+        , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
+        ]
+    , HH.button
+        [ HP.class_ (HH.ClassName "secondary-btn")
+        , HE.onClick \_ -> UseVaultEntryInRestore entry.id
+        ]
+        [ HH.text "Use in Restore" ]
+    ]
+
+renderSigningVaultEntry :: forall w. Vault.VaultEntry -> HH.HTML w Action
+renderSigningVaultEntry entry =
+  HH.div
+    [ HP.class_ (HH.ClassName "vault-entry") ]
+    [ HH.div_
+        [ HH.strong_ [ HH.text entry.label ]
+        , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
+        ]
+    , HH.button
+        [ HP.class_ (HH.ClassName "secondary-btn")
+        , HE.onClick \_ -> UseVaultEntryInSigning entry.id
+        ]
+        [ HH.text "Use in Signing" ]
+    ]
+
+lookupVaultEntry :: String -> Array Vault.VaultEntry -> Maybe Vault.VaultEntry
+lookupVaultEntry entryId entries = case uncons (filter (\entry -> entry.id == entryId) entries) of
+  Nothing -> Nothing
+  Just { head } -> Just head
+
+mnemonicVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
+mnemonicVaultEntries = filter (\entry -> entry.kind == Vault.kindTag Vault.VaultMnemonic)
+
+signingKeyVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
+signingKeyVaultEntries = filter (\entry -> entry.kind == Vault.kindTag Vault.VaultSigningKey)
+
+vaultEntryKindLabel :: String -> String
+vaultEntryKindLabel kind
+  | kind == Vault.kindTag Vault.VaultMnemonic = Vault.labelForKind Vault.VaultMnemonic
+  | kind == Vault.kindTag Vault.VaultSigningKey = Vault.labelForKind Vault.VaultSigningKey
+  | otherwise = kind
+
+normalizedVaultFileName :: String -> String
+normalizedVaultFileName fileName =
+  let
+    trimmed = String.trim fileName
+  in
+    if trimmed == "" then "cardano-addresses.vault.json" else trimmed
+
+vaultStateLabel :: State -> String
+vaultStateLabel state
+  | state.vaultUnlocked && state.vaultDirty = "Unlocked, modified in memory"
+  | state.vaultUnlocked = "Unlocked"
+  | otherwise = "Locked"
+
 type NavItem =
   { page :: Page
   , label :: String
@@ -2037,6 +2430,7 @@ navItems =
   , { page: Legacy, label: "Expert", note: "Manual bootstrap xpubs" }
   , { page: Signing, label: "Signing", note: "Sign and verify" }
   , { page: Scripts, label: "Scripts", note: "Hash native scripts" }
+  , { page: Vault, label: "Vault", note: "Encrypted file storage" }
   , { page: Library, label: "Library", note: "Reusable exports" }
   ]
 
@@ -2049,4 +2443,5 @@ pageTitle = case _ of
   Legacy -> "Manual Bootstrap Construction"
   Signing -> "Signing Tools"
   Scripts -> "Native Scripts"
+  Vault -> "Encrypted Vault"
   Library -> "Library Surface"
