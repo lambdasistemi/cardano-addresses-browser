@@ -215,13 +215,13 @@ handleAction = case _ of
     words <- liftEffect (Mnemonic.generateMnemonic state.mnemonicWordCount)
     H.modify_ _
       { generatedMnemonic = Just words
-      , derivationInput = joinWith " " words
       }
-    refreshDerivation
   CopyMnemonic -> do
     state <- H.get
     let
-      normalizedPhrase = joinWith " " (normalizeMnemonicInput state.derivationInput)
+      normalizedPhrase = case state.generatedMnemonic of
+        Nothing -> ""
+        Just words -> joinWith " " words
     if normalizedPhrase == "" then
       pure unit
     else
@@ -619,7 +619,7 @@ renderActivePage :: forall w. State -> HH.HTML w Action
 renderActivePage state = case state.activePage of
   Overview -> renderOverview
   Inspect -> renderInspectPage state
-  Mnemonic -> renderDerivationPage state
+  Mnemonic -> renderMnemonicPage state
   Derivation -> renderDerivationPage state
   Legacy -> renderLegacyPage state
   Signing -> renderSigningPage state
@@ -694,7 +694,7 @@ renderMnemonicPage state =
     [ sectionCard
         "Mnemonic generation"
         [ HH.p_
-            [ HH.text "Generate an English BIP39 recovery phrase directly in the browser." ]
+            [ HH.text "Generate and validate a recovery phrase independently, then hand it off into restore or other key-driven flows." ]
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
             (map (renderWordCountButton state.mnemonicWordCount) mnemonicWordCounts)
@@ -705,11 +705,26 @@ renderMnemonicPage state =
                 , HE.onClick \_ -> GenerateMnemonic
                 ]
                 [ HH.text "Generate phrase" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> ToggleRestorePhraseVisibility
+                ]
+                [ HH.text (if state.showRestorePhrase then "Hide phrase" else "Show phrase") ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> CopyMnemonic
+                ]
+                [ HH.text "Copy phrase" ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> UseGeneratedMnemonic
+                ]
+                [ HH.text "Use in Restore" ]
             ]
         ]
     , sectionCard
         "Generated phrase"
-        [ renderMnemonicResult state.showRestorePhrase state.derivationInput ]
+        [ renderGeneratedMnemonicResult state.showRestorePhrase state.generatedMnemonic ]
     ]
 
 renderDerivationPage :: forall w. State -> HH.HTML w Action
@@ -727,31 +742,9 @@ renderDerivationPage state =
             , renderRestoreFamilyButton state.restoreFamily RestoreByron
             ]
         , HH.div
-            [ HP.class_ (HH.ClassName "mnemonic-controls") ]
+            [ HP.class_ (HH.ClassName "privacy-note") ]
             [ HH.p_
-                [ HH.text "Generate a fresh phrase here when you are starting from mnemonic material. Generation immediately feeds the restore input below." ]
-            , HH.div
-                [ HP.class_ (HH.ClassName "action-row") ]
-                (map (renderWordCountButton state.mnemonicWordCount) mnemonicWordCounts)
-            , HH.div
-                [ HP.class_ (HH.ClassName "action-row") ]
-                [ HH.button
-                    [ HP.class_ (HH.ClassName "primary-btn")
-                    , HE.onClick \_ -> GenerateMnemonic
-                    ]
-                    [ HH.text "Generate phrase" ]
-                , HH.button
-                    [ HP.class_ (HH.ClassName "secondary-btn")
-                    , HE.onClick \_ -> ToggleRestorePhraseVisibility
-                    ]
-                    [ HH.text (if state.showRestorePhrase then "Hide phrase" else "Show phrase") ]
-                , HH.button
-                    [ HP.class_ (HH.ClassName "secondary-btn")
-                    , HE.onClick \_ -> CopyMnemonic
-                    ]
-                    [ HH.text "Copy phrase" ]
-                ]
-            , renderMnemonicResult state.showRestorePhrase state.derivationInput
+                [ HH.text "Mnemonic generation is separate again. Use the Mnemonic page when you want to create or review a phrase, then paste or hand it off here." ]
             ]
         , renderDerivationInput state
         , HH.div
@@ -1362,6 +1355,29 @@ renderMnemonicResult isVisible derivationInput =
               [ HP.class_ (HH.ClassName "mnemonic-grid") ]
               (map renderMnemonicWord (zipWithIndex words))
         ]
+
+renderGeneratedMnemonicResult :: forall w. Boolean -> Maybe (Array String) -> HH.HTML w Action
+renderGeneratedMnemonicResult isVisible maybeWords = case maybeWords of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "No recovery phrase generated yet. Choose a word count and generate one here." ]
+      ]
+  Just words ->
+    HH.div
+      [ HP.class_ (HH.ClassName "mnemonic-result") ]
+      [ if not isVisible then
+          HH.div
+            [ HP.class_ (HH.ClassName "privacy-note") ]
+            [ HH.p_
+                [ HH.text ("Phrase hidden. " <> show (length words) <> " words are available for clipboard copy.") ]
+            ]
+        else
+          HH.div
+            [ HP.class_ (HH.ClassName "mnemonic-grid") ]
+            (map renderMnemonicWord (zipWithIndex words))
+      ]
 
 renderMnemonicWord :: forall w. { index :: Int, word :: String } -> HH.HTML w Action
 renderMnemonicWord item =
@@ -2016,6 +2032,7 @@ navItems :: Array NavItem
 navItems =
   [ { page: Overview, label: "Overview", note: "Workspace health" }
   , { page: Inspect, label: "Inspect", note: "Decode addresses" }
+  , { page: Mnemonic, label: "Mnemonic", note: "Generate and hand off" }
   , { page: Derivation, label: "Restore", note: "Choose family first" }
   , { page: Legacy, label: "Expert", note: "Manual bootstrap xpubs" }
   , { page: Signing, label: "Signing", note: "Sign and verify" }
@@ -2027,7 +2044,7 @@ pageTitle :: Page -> String
 pageTitle = case _ of
   Overview -> "Project Overview"
   Inspect -> "Address Inspection"
-  Mnemonic -> "Restore And Build"
+  Mnemonic -> "Mnemonic Tools"
   Derivation -> "Restore And Build"
   Legacy -> "Manual Bootstrap Construction"
   Signing -> "Signing Tools"
