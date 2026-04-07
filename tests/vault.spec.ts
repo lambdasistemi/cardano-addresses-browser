@@ -22,6 +22,8 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
   await expect(page.locator(".page-title")).toHaveText("Encrypted Vault");
   await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
+  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Show passphrase" }).click();
   await page.getByRole("button", { name: "Create vault" }).click();
   await expect(page.getByText("Unlocked, modified in memory")).toBeVisible();
 
@@ -58,6 +60,7 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
   await expect(page.locator(".page-title")).toHaveText("Encrypted Vault");
   await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
+  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Create vault" }).click();
 
   await page.getByRole("button", { name: /Mnemonic Generate and hand off/ }).click();
