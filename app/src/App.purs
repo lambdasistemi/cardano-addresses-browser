@@ -95,6 +95,8 @@ data Action
   | SetScriptInputMode ScriptInputMode
   | SetScriptInput String
   | SetVaultPassphraseInput String
+  | SetVaultPassphraseConfirmInput String
+  | ToggleVaultPassphraseVisibility
   | SetVaultFileNameInput String
   | CreateVault
   | ImportVault
@@ -149,6 +151,8 @@ type State =
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
   , scriptTemplateAnalysisResult :: Maybe (Either String Script.ScriptTemplateAnalysis)
   , vaultPassphraseInput :: String
+  , vaultPassphraseConfirmInput :: String
+  , showVaultPassphrase :: Boolean
   , vaultFileNameInput :: String
   , vaultUnlocked :: Boolean
   , vaultEntries :: Array Vault.VaultEntry
@@ -200,6 +204,8 @@ initialState =
   , scriptAnalysisResult: Nothing
   , scriptTemplateAnalysisResult: Nothing
   , vaultPassphraseInput: ""
+  , vaultPassphraseConfirmInput: ""
+  , showVaultPassphrase: false
   , vaultFileNameInput: "cardano-addresses.vault.json"
   , vaultUnlocked: false
   , vaultEntries: []
@@ -402,12 +408,18 @@ handleAction = case _ of
         }
   SetVaultPassphraseInput value ->
     H.modify_ _ { vaultPassphraseInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  SetVaultPassphraseConfirmInput value ->
+    H.modify_ _ { vaultPassphraseConfirmInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  ToggleVaultPassphraseVisibility ->
+    H.modify_ \state -> state { showVaultPassphrase = not state.showVaultPassphrase }
   SetVaultFileNameInput value ->
     H.modify_ _ { vaultFileNameInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
   CreateVault -> do
     state <- H.get
     if String.trim state.vaultPassphraseInput == "" then
       H.modify_ _ { vaultErrorMessage = Just "Enter a vault passphrase before creating a vault.", vaultStatusMessage = Nothing }
+    else if state.vaultPassphraseInput /= state.vaultPassphraseConfirmInput then
+      H.modify_ _ { vaultErrorMessage = Just "Vault passphrase confirmation does not match.", vaultStatusMessage = Nothing }
     else
       H.modify_ _
         { vaultUnlocked = true
@@ -443,6 +455,8 @@ handleAction = case _ of
       H.modify_ _ { vaultErrorMessage = Just "Create or unlock a vault before exporting it.", vaultStatusMessage = Nothing }
     else if String.trim state.vaultPassphraseInput == "" then
       H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before exporting the vault file.", vaultStatusMessage = Nothing }
+    else if state.vaultPassphraseInput /= state.vaultPassphraseConfirmInput then
+      H.modify_ _ { vaultErrorMessage = Just "Vault passphrase confirmation does not match.", vaultStatusMessage = Nothing }
     else do
       let
         fileName = normalizedVaultFileName state.vaultFileNameInput
@@ -1277,10 +1291,21 @@ renderVaultPage state =
             [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault passphrase" ]
             , HH.input
                 [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
-                , HP.type_ HP.InputPassword
+                , HP.type_ (if state.showVaultPassphrase then HP.InputText else HP.InputPassword)
                 , HP.placeholder "Strong passphrase for the vault file"
                 , HP.value state.vaultPassphraseInput
                 , HE.onValueInput SetVaultPassphraseInput
+                ]
+            ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Repeat passphrase" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
+                , HP.type_ (if state.showVaultPassphrase then HP.InputText else HP.InputPassword)
+                , HP.placeholder "Repeat the vault passphrase"
+                , HP.value state.vaultPassphraseConfirmInput
+                , HE.onValueInput SetVaultPassphraseConfirmInput
                 ]
             ]
         , HH.label
@@ -1296,6 +1321,11 @@ renderVaultPage state =
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
             [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> ToggleVaultPassphraseVisibility
+                ]
+                [ HH.text (if state.showVaultPassphrase then "Hide passphrase" else "Show passphrase") ]
+            , HH.button
                 [ HP.class_ (HH.ClassName "primary-btn")
                 , HE.onClick \_ -> CreateVault
                 ]
