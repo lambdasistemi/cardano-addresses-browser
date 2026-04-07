@@ -31,6 +31,12 @@ export const familyRestoreVectors = fixture.familyRestoreVectors.map((vector) =>
   role: toMaybe(vector.role),
 }));
 
+export const shelleyRestoreVectors = fixture.shelleyRestoreVectors.map((vector) => ({
+  ...vector,
+  paymentAddressBech32: toMaybe(vector.paymentAddressBech32),
+  delegationAddressBech32: toMaybe(vector.delegationAddressBech32),
+}));
+
 export const scriptHashVectors = fixture.scriptHashVectors;
 
 export const scriptTemplateVectors = fixture.scriptTemplateVectors;

@@ -6,6 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
+import Cardano.Address.Shelley as Shelley
 import Cardano.Address.Script (analyzeNativeScriptHex, analyzeNativeScriptJson, analyzeScriptTemplateJson)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
@@ -16,7 +17,7 @@ import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
-import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors)
+import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, ShelleyRestoreVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors, shelleyRestoreVectors)
 
 main :: Effect Unit
 main = launchAff_ do
@@ -24,6 +25,7 @@ main = launchAff_ do
   liftEffect (traverse_ assertInspectionVector inspectionVectors)
   traverse_ assertBootstrapVector bootstrapVectors
   traverse_ assertFamilyRestoreVector familyRestoreVectors
+  traverse_ assertShelleyRestoreVector shelleyRestoreVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
 
@@ -95,6 +97,47 @@ assertFamilyRestoreVector vector = do
 
   when (base58 actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Family restore vector mismatch: " <> vector.label))
+
+assertShelleyRestoreVector :: ShelleyRestoreVector -> Aff Unit
+assertShelleyRestoreVector vector = do
+  derivedKeys <- case vector.role of
+    "external" -> launchDerivation vector UTxOExternal
+    "internal" -> launchDerivation vector UTxOInternal
+    "stake" -> launchDerivation vector Stake
+    other -> liftEffect (throw ("Unsupported Shelley restore role: " <> other))
+
+  let
+    paymentXPub =
+      case vector.role of
+        "stake" -> Nothing
+        _ -> Just derivedKeys.addressPublicKeyBech32
+
+  case Shelley.constructShelleyAddresses
+    (parseShelleyNetwork vector.networkTag)
+    paymentXPub
+    derivedKeys.stakePublicKeyBech32 of
+    Right actual | actual == expectedShelleyAddresses vector -> pure unit
+    Right _ ->
+      liftEffect (throw ("Shelley restore vector mismatch: " <> vector.label))
+    Left err ->
+      liftEffect (throw ("Shelley restore unexpectedly failed for " <> vector.label <> ": " <> err))
+
+launchDerivation :: ShelleyRestoreVector -> Role -> Aff { rootKeyBech32 :: String, accountKeyBech32 :: String, addressKeyBech32 :: String, addressPublicKeyBech32 :: String, stakeKeyBech32 :: String, stakePublicKeyBech32 :: String }
+launchDerivation vector role =
+  derivePipeline vector.mnemonic vector.accountIndex role vector.addressIndex
+
+expectedShelleyAddresses :: ShelleyRestoreVector -> Shelley.ShelleyAddresses
+expectedShelleyAddresses vector =
+  { paymentAddressBech32: vector.paymentAddressBech32
+  , delegationAddressBech32: vector.delegationAddressBech32
+  , rewardAddressBech32: vector.rewardAddressBech32
+  }
+
+parseShelleyNetwork :: Int -> Shelley.ShelleyNetwork
+parseShelleyNetwork = case _ of
+  1 -> Shelley.ShelleyMainnet
+  0 -> Shelley.ShelleyPreprod
+  tag -> Shelley.ShelleyCustom tag
 
 parseXPub :: String -> Effect Uint8Array
 parseXPub value = case Bootstrap.parseBootstrapXPub value of
