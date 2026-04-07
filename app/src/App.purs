@@ -98,6 +98,9 @@ data Action
   | SetVaultPassphraseConfirmInput String
   | ToggleVaultPassphraseVisibility
   | SetVaultFileNameInput String
+  | SetMnemonicVaultLabelInput String
+  | SetRestoreVaultLabelInput String
+  | SetSigningVaultLabelInput String
   | CreateVault
   | ImportVault
   | ExportVault
@@ -154,6 +157,9 @@ type State =
   , vaultPassphraseConfirmInput :: String
   , showVaultPassphrase :: Boolean
   , vaultFileNameInput :: String
+  , mnemonicVaultLabelInput :: String
+  , restoreVaultLabelInput :: String
+  , signingVaultLabelInput :: String
   , vaultUnlocked :: Boolean
   , vaultEntries :: Array Vault.VaultEntry
   , vaultDirty :: Boolean
@@ -207,6 +213,9 @@ initialState =
   , vaultPassphraseConfirmInput: ""
   , showVaultPassphrase: false
   , vaultFileNameInput: "cardano-addresses.vault.json"
+  , mnemonicVaultLabelInput: ""
+  , restoreVaultLabelInput: ""
+  , signingVaultLabelInput: ""
   , vaultUnlocked: false
   , vaultEntries: []
   , vaultDirty: false
@@ -414,6 +423,12 @@ handleAction = case _ of
     H.modify_ \state -> state { showVaultPassphrase = not state.showVaultPassphrase }
   SetVaultFileNameInput value ->
     H.modify_ _ { vaultFileNameInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  SetMnemonicVaultLabelInput value ->
+    H.modify_ _ { mnemonicVaultLabelInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  SetRestoreVaultLabelInput value ->
+    H.modify_ _ { restoreVaultLabelInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
+  SetSigningVaultLabelInput value ->
+    H.modify_ _ { signingVaultLabelInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
   CreateVault -> do
     state <- H.get
     if String.trim state.vaultPassphraseInput == "" then
@@ -487,7 +502,7 @@ handleAction = case _ of
       Just words ->
         saveVaultEntry
           Vault.VaultMnemonic
-          (show (length words) <> "-word mnemonic")
+          (normalizedEntryLabel state.mnemonicVaultLabelInput (show (length words) <> "-word mnemonic"))
           (joinWith " " words)
   SaveRestorePhraseToVault -> do
     state <- H.get
@@ -498,7 +513,7 @@ handleAction = case _ of
     else
       saveVaultEntry
         Vault.VaultMnemonic
-        (restoreFamilyLabel state.restoreFamily <> " restore phrase")
+        (normalizedEntryLabel state.restoreVaultLabelInput (restoreFamilyLabel state.restoreFamily <> " restore phrase"))
         phrase
   SaveSigningKeyToVault -> do
     state <- H.get
@@ -507,7 +522,7 @@ handleAction = case _ of
     if key == "" then
       H.modify_ _ { vaultErrorMessage = Just "Paste a signing key before saving it to the vault.", vaultStatusMessage = Nothing }
     else
-      saveVaultEntry Vault.VaultSigningKey "Signing key" key
+      saveVaultEntry Vault.VaultSigningKey (normalizedEntryLabel state.signingVaultLabelInput "Signing key") key
   UseVaultEntryInRestore entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
@@ -902,6 +917,16 @@ renderMnemonicPage state =
                 ]
                 [ HH.text "Save to vault" ]
             ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault item name" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "inline-input")
+                , HP.placeholder "12-word mnemonic"
+                , HP.value state.mnemonicVaultLabelInput
+                , HE.onValueInput SetMnemonicVaultLabelInput
+                ]
+            ]
         , renderVaultInlineStatus state
         ]
     , sectionCard
@@ -1030,6 +1055,16 @@ renderDerivationPage state =
                 , HE.onClick \_ -> SaveRestorePhraseToVault
                 ]
                 [ HH.text "Save phrase to vault" ]
+            ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault item name" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "inline-input")
+                , HP.placeholder (restoreFamilyLabel state.restoreFamily <> " restore phrase")
+                , HP.value state.restoreVaultLabelInput
+                , HE.onValueInput SetRestoreVaultLabelInput
+                ]
             ]
         , renderVaultInlineStatus state
         ]
@@ -1183,6 +1218,16 @@ renderSigningPage state =
                 , HE.onClick \_ -> SaveSigningKeyToVault
                 ]
                 [ HH.text "Save signing key to vault" ]
+            ]
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault item name" ]
+            , HH.input
+                [ HP.class_ (HH.ClassName "inline-input")
+                , HP.placeholder "Signing key"
+                , HP.value state.signingVaultLabelInput
+                , HE.onValueInput SetSigningVaultLabelInput
+                ]
             ]
         , renderVaultSigningShelf state
         , if state.showSigningKey then
@@ -2431,6 +2476,13 @@ vaultEntryKindLabel kind
   | kind == Vault.kindTag Vault.VaultMnemonic = Vault.labelForKind Vault.VaultMnemonic
   | kind == Vault.kindTag Vault.VaultSigningKey = Vault.labelForKind Vault.VaultSigningKey
   | otherwise = kind
+
+normalizedEntryLabel :: String -> String -> String
+normalizedEntryLabel customLabel fallbackLabel =
+  let
+    trimmed = String.trim customLabel
+  in
+    if trimmed == "" then fallbackLabel else trimmed
 
 normalizedVaultFileName :: String -> String
 normalizedVaultFileName fileName =
