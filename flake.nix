@@ -32,15 +32,20 @@
           haskellProject = import ./nix/project.nix {
             inherit indexState pkgs;
           };
+          playwrightBrowsers = pkgs.playwright-driver.browsers;
+          apps = import ./nix/apps {
+            inherit pkgs playwrightBrowsers;
+          };
           test-vectors-json = pkgs.runCommand "cardano-addresses-browser-test-vectors" {} ''
             mkdir -p $out
             ${haskellProject.packages.test-vectors-exe}/bin/cardano-addresses-browser-vectors > $out/vectors.json
           '';
         in
         {
-          packages.playwright-browsers = pkgs.playwright-driver.browsers;
+          packages.playwright-browsers = playwrightBrowsers;
           packages.test-vectors-exe = haskellProject.packages.test-vectors-exe;
           packages.test-vectors = test-vectors-json;
+          inherit apps;
           devShells.default = pkgs.mkShell {
             inputsFrom = [ haskellProject.devShells.default ];
             packages = [
