@@ -22,6 +22,7 @@ import Prelude
 
 import Cardano.Address (
     Address,
+    AddressDiscrimination (RequiresNetworkTag),
     ChainPointer (..),
     NetworkDiscriminant,
     NetworkTag (..),
@@ -105,7 +106,7 @@ import Codec.CBOR.Decoding qualified as CBORDec
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Text.Encoding qualified as Text
-import Data.Word (Word8)
+import Data.Word (Word32, Word8)
 
 data Vectors = Vectors
     { derivationVectors :: [DerivationVector]
@@ -437,6 +438,14 @@ scriptHashVectorsForMnemonic mnemonicWords =
 bootstrapVectorsForMnemonic :: [Text] -> [BootstrapVector]
 bootstrapVectorsForMnemonic mnemonicWords =
     let stem = mnemonicStem mnemonicWords
+        customProtocolMagic :: Int
+        customProtocolMagic = 4242
+        customNetworkTag :: Word32
+        customNetworkTag = 4242
+        customIcarusDiscriminant :: NetworkDiscriminant Icarus.Icarus
+        customIcarusDiscriminant = (RequiresNetworkTag, NetworkTag customNetworkTag)
+        customByronDiscriminant :: NetworkDiscriminant Byron.Byron
+        customByronDiscriminant = (RequiresNetworkTag, NetworkTag customNetworkTag)
         icarusRoot = icarusRootKeyFromMnemonic mnemonicWords
         icarusAccount0 = icarusAccountKey icarusRoot 0
         icarusExternal0 = icarusAddressKey icarusAccount0 Icarus.UTxOExternal 0
@@ -458,6 +467,12 @@ bootstrapVectorsForMnemonic mnemonicWords =
             2
             (toXPub <$> icarusInternal7)
             (Icarus.paymentAddress Icarus.icarusPreview (toXPub <$> icarusInternal7))
+        , mkIcarusBootstrapVector
+            (stem <> "-icarus-custom-bootstrap")
+            "custom"
+            customProtocolMagic
+            (toXPub <$> icarusExternal0)
+            (Icarus.paymentAddress customIcarusDiscriminant (toXPub <$> icarusExternal0))
         , mkByronBootstrapVector
             (stem <> "-byron-mainnet-bootstrap")
             "mainnet"
@@ -482,6 +497,14 @@ bootstrapVectorsForMnemonic mnemonicWords =
             (toXPub <$> byronAddress0)
             "0H/0"
             (Byron.paymentAddress Byron.byronPreprod (toXPub <$> byronAddress0))
+        , mkByronBootstrapVector
+            (stem <> "-byron-custom-bootstrap")
+            "custom"
+            customProtocolMagic
+            byronRootXPub
+            (toXPub <$> byronAddress14)
+            "0H/14"
+            (Byron.paymentAddress customByronDiscriminant (toXPub <$> byronAddress14))
         ]
 
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector

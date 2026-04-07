@@ -11,6 +11,7 @@ import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
 import Data.Array (length, mapWithIndex)
 import Data.Either (Either(..))
+import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.String as String
 import Data.String (joinWith)
@@ -59,9 +60,11 @@ data Action
   | RunDerivation
   | SetLegacyStyle Bootstrap.LegacyStyle
   | SetLegacyNetwork Bootstrap.LegacyNetwork
+  | SelectLegacyCustomNetwork
   | SetLegacyAddressXPubInput String
   | SetLegacyRootXPubInput String
   | SetLegacyDerivationPathInput String
+  | SetLegacyCustomMagicInput String
   | SetScriptInput String
 
 type State =
@@ -83,6 +86,7 @@ type State =
   , legacyAddressXPubInput :: String
   , legacyRootXPubInput :: String
   , legacyDerivationPathInput :: String
+  , legacyCustomMagicInput :: String
   , legacyResult :: Maybe (Either String String)
   , scriptInput :: String
   , scriptHashResult :: Maybe (Either String ScriptHash.ScriptHashResult)
@@ -108,6 +112,7 @@ initialState =
   , legacyAddressXPubInput: ""
   , legacyRootXPubInput: ""
   , legacyDerivationPathInput: "0H/0"
+  , legacyCustomMagicInput: "4242"
   , legacyResult: Nothing
   , scriptInput: ""
   , scriptHashResult: Nothing
@@ -192,6 +197,14 @@ handleAction = case _ of
   SetLegacyNetwork network ->
     H.modify_ _ { legacyNetwork = network }
       *> refreshLegacyConstruction
+  SelectLegacyCustomNetwork -> do
+    state <- H.get
+    let
+      nextNetwork = case parseLegacyCustomMagic state.legacyCustomMagicInput of
+        Right magic -> Bootstrap.LegacyCustom magic
+        Left _ -> Bootstrap.LegacyCustom 4242
+    H.modify_ _ { legacyNetwork = nextNetwork }
+      *> refreshLegacyConstruction
   SetLegacyAddressXPubInput value ->
     H.modify_ _ { legacyAddressXPubInput = value }
       *> refreshLegacyConstruction
@@ -200,6 +213,18 @@ handleAction = case _ of
       *> refreshLegacyConstruction
   SetLegacyDerivationPathInput value ->
     H.modify_ _ { legacyDerivationPathInput = value }
+      *> refreshLegacyConstruction
+  SetLegacyCustomMagicInput value -> do
+    state <- H.get
+    let
+      nextNetwork =
+        if isLegacyCustomNetwork state.legacyNetwork then
+          case parseLegacyCustomMagic value of
+            Right magic -> Bootstrap.LegacyCustom magic
+            Left _ -> state.legacyNetwork
+        else
+          state.legacyNetwork
+    H.modify_ _ { legacyCustomMagicInput = value, legacyNetwork = nextNetwork }
       *> refreshLegacyConstruction
   SetScriptInput value ->
     H.modify_ _ { scriptInput = value, scriptHashResult = scriptHashStatus value }
@@ -236,28 +261,33 @@ refreshLegacyConstruction = do
     H.modify_ _ { legacyResult = Nothing }
   else do
     let
-      result = case Bootstrap.parseBootstrapXPub state.legacyAddressXPubInput of
+      selectedNetwork = resolveLegacyNetwork state
+      result = case selectedNetwork of
         Left err ->
           pure (Left err)
-        Right addressXPub -> case state.legacyStyle of
-          Bootstrap.LegacyIcarus ->
-            pure (Right (base58 (Bootstrap.constructIcarusAddress state.legacyNetwork addressXPub)))
-          Bootstrap.LegacyByron ->
-            if String.trim state.legacyRootXPubInput == "" then
-              pure (Left "Paste the root_xvk key for Byron bootstrap addresses.")
-            else case Bootstrap.parseBootstrapXPub state.legacyRootXPubInput of
-              Left err ->
-                pure (Left err)
-              Right rootXPub ->
-                if String.trim state.legacyDerivationPathInput == "" then
-                  pure (Left "Enter a 2-segment Byron path like 0H/0.")
-                else do
-                  address <- Bootstrap.constructByronAddress
-                    state.legacyNetwork
-                    addressXPub
-                    rootXPub
-                    state.legacyDerivationPathInput
-                  pure (Right (base58 address))
+        Right network ->
+          case Bootstrap.parseBootstrapXPub state.legacyAddressXPubInput of
+            Left err ->
+              pure (Left err)
+            Right addressXPub -> case state.legacyStyle of
+              Bootstrap.LegacyIcarus ->
+                pure (Right (base58 (Bootstrap.constructIcarusAddress network addressXPub)))
+              Bootstrap.LegacyByron ->
+                if String.trim state.legacyRootXPubInput == "" then
+                  pure (Left "Paste the root_xvk key for Byron bootstrap addresses.")
+                else case Bootstrap.parseBootstrapXPub state.legacyRootXPubInput of
+                  Left err ->
+                    pure (Left err)
+                  Right rootXPub ->
+                    if String.trim state.legacyDerivationPathInput == "" then
+                      pure (Left "Enter a 2-segment Byron path like 0H/0.")
+                    else do
+                      address <- Bootstrap.constructByronAddress
+                        network
+                        addressXPub
+                        rootXPub
+                        state.legacyDerivationPathInput
+                      pure (Right (base58 address))
     actual <- liftAff (try result)
     H.modify_ _
       { legacyResult = Just case actual of
@@ -506,6 +536,23 @@ renderLegacyPage state =
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
             (map (renderLegacyNetworkButton state.legacyNetwork) legacyNetworks)
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ renderLegacyCustomNetworkButton state.legacyNetwork ]
+        , if isLegacyCustomSelected state then
+            HH.label
+              [ HP.class_ (HH.ClassName "field-group") ]
+              [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Protocol magic" ]
+              , HH.input
+                  [ HP.class_ (HH.ClassName "inline-input")
+                  , HP.type_ HP.InputNumber
+                  , HP.placeholder "4242"
+                  , HP.value state.legacyCustomMagicInput
+                  , HE.onValueInput SetLegacyCustomMagicInput
+                  ]
+              ]
+          else
+            HH.text ""
         , HH.label
             [ HP.class_ (HH.ClassName "field-group") ]
             [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Address xpub" ]
@@ -544,7 +591,7 @@ renderLegacyPage state =
               ]
           else
             HH.text ""
-        , keyValue "Network" (Bootstrap.legacyNetworkLabel state.legacyNetwork)
+        , keyValue "Network" (legacyNetworkSummary state)
         , keyValue "Style" (legacyStyleLabel state.legacyStyle)
         ]
     , sectionCard
@@ -787,6 +834,15 @@ renderLegacyNetworkButton activeNetwork network =
     ]
     [ HH.text (legacyNetworkShortLabel network) ]
 
+renderLegacyCustomNetworkButton :: forall w. Bootstrap.LegacyNetwork -> HH.HTML w Action
+renderLegacyCustomNetworkButton activeNetwork =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if isLegacyCustomNetwork activeNetwork then " active" else ""))
+    , HE.onClick \_ -> SelectLegacyCustomNetwork
+    ]
+    [ HH.text "Custom" ]
+
 renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
 renderMnemonicResult privacyLevel = case _ of
   Nothing ->
@@ -846,6 +902,35 @@ legacyNetworks =
   , Bootstrap.LegacyPreview
   , Bootstrap.LegacyPreprod
   ]
+
+isLegacyCustomNetwork :: Bootstrap.LegacyNetwork -> Boolean
+isLegacyCustomNetwork = case _ of
+  Bootstrap.LegacyCustom _ -> true
+  _ -> false
+
+isLegacyCustomSelected :: State -> Boolean
+isLegacyCustomSelected state = isLegacyCustomNetwork state.legacyNetwork
+
+parseLegacyCustomMagic :: String -> Either String Int
+parseLegacyCustomMagic rawValue =
+  let
+    trimmed = String.trim rawValue
+  in
+    if trimmed == "" then
+      Left "Enter a custom protocol magic."
+    else case Int.fromString trimmed of
+      Just magic | magic >= 0 -> Right magic
+      _ -> Left "Enter a non-negative integer for the custom protocol magic."
+
+resolveLegacyNetwork :: State -> Either String Bootstrap.LegacyNetwork
+resolveLegacyNetwork state = case state.legacyNetwork of
+  Bootstrap.LegacyCustom _ -> Bootstrap.LegacyCustom <$> parseLegacyCustomMagic state.legacyCustomMagicInput
+  network -> Right network
+
+legacyNetworkSummary :: State -> String
+legacyNetworkSummary state = case resolveLegacyNetwork state of
+  Right network -> Bootstrap.legacyNetworkLabel network
+  Left err -> "Custom (" <> err <> ")"
 
 inspectStatus :: Maybe (Either String Inspect.AddressInfo) -> String
 inspectStatus = case _ of
