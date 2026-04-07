@@ -42,6 +42,12 @@ data PrivacyLevel
 
 derive instance eqPrivacyLevel :: Eq PrivacyLevel
 
+data ScriptInputMode
+  = ScriptInputCbor
+  | ScriptInputJson
+
+derive instance eqScriptInputMode :: Eq ScriptInputMode
+
 data Action
   = SelectPage Page
   | SetInspectInput String
@@ -65,6 +71,7 @@ data Action
   | SetLegacyRootXPubInput String
   | SetLegacyDerivationPathInput String
   | SetLegacyCustomMagicInput String
+  | SetScriptInputMode ScriptInputMode
   | SetScriptInput String
 
 type State =
@@ -88,6 +95,7 @@ type State =
   , legacyDerivationPathInput :: String
   , legacyCustomMagicInput :: String
   , legacyResult :: Maybe (Either String String)
+  , scriptInputMode :: ScriptInputMode
   , scriptInput :: String
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
   }
@@ -114,6 +122,7 @@ initialState =
   , legacyDerivationPathInput: "0H/0"
   , legacyCustomMagicInput: "4242"
   , legacyResult: Nothing
+  , scriptInputMode: ScriptInputCbor
   , scriptInput: ""
   , scriptAnalysisResult: Nothing
   }
@@ -226,8 +235,18 @@ handleAction = case _ of
           state.legacyNetwork
     H.modify_ _ { legacyCustomMagicInput = value, legacyNetwork = nextNetwork }
       *> refreshLegacyConstruction
+  SetScriptInputMode mode -> do
+    state <- H.get
+    H.modify_ _
+      { scriptInputMode = mode
+      , scriptAnalysisResult = scriptAnalysisStatus mode state.scriptInput
+      }
   SetScriptInput value ->
-    H.modify_ _ { scriptInput = value, scriptAnalysisResult = scriptAnalysisStatus value }
+    H.modify_ \state ->
+      state
+        { scriptInput = value
+        , scriptAnalysisResult = scriptAnalysisStatus state.scriptInputMode value
+        }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -295,15 +314,23 @@ refreshLegacyConstruction = do
           Right value -> value
       }
 
-scriptAnalysisStatus :: String -> Maybe (Either String Script.ScriptAnalysis)
-scriptAnalysisStatus value =
+scriptAnalysisStatus :: ScriptInputMode -> String -> Maybe (Either String Script.ScriptAnalysis)
+scriptAnalysisStatus mode value =
   let
-    normalized = normalizeHexInput value
+    trimmed = String.trim value
+    normalizedHex = normalizeHexInput value
   in
-    if normalized == "" then
-      Nothing
-    else
-      Just (Script.analyzeNativeScriptHex normalized)
+    case mode of
+      ScriptInputCbor ->
+        if normalizedHex == "" then
+          Nothing
+        else
+          Just (Script.analyzeNativeScriptHex normalizedHex)
+      ScriptInputJson ->
+        if trimmed == "" then
+          Nothing
+        else
+          Just (Script.analyzeNativeScriptJson trimmed)
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -630,16 +657,21 @@ renderScriptsPage state =
     [ sectionCard
         "Native script tools"
         [ HH.p_
-            [ HH.text "Paste native script CBOR as hex to compute the ledger script hash, inspect the root script kind, and validate the script locally in the browser." ]
+            [ HH.text "Author native scripts as canonical JSON or paste existing CBOR preimages. The browser reserializes the script, computes the ledger hash, and validates the result locally." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ renderScriptModeButton state.scriptInputMode ScriptInputCbor "CBOR hex"
+            , renderScriptModeButton state.scriptInputMode ScriptInputJson "JSON"
+            ]
         , HH.textarea
             [ HP.class_ (HH.ClassName "text-input script-input")
             , HP.rows 6
-            , HP.placeholder "8200581c..."
+            , HP.placeholder (scriptInputPlaceholder state.scriptInputMode)
             , HP.value state.scriptInput
             , HE.onValueInput SetScriptInput
             ]
-        , keyValue "Accepted input" "Native script CBOR hex"
-        , keyValue "Output" "Hash, validation status, and canonical CBOR"
+        , keyValue "Accepted input" (scriptInputModeLabel state.scriptInputMode)
+        , keyValue "Output" "Hash, validation status, canonical JSON, and script preimage CBOR"
         ]
     , sectionCard
         "Script analysis"
@@ -843,6 +875,15 @@ renderLegacyCustomNetworkButton activeNetwork =
     ]
     [ HH.text "Custom" ]
 
+renderScriptModeButton :: forall w. ScriptInputMode -> ScriptInputMode -> String -> HH.HTML w Action
+renderScriptModeButton activeMode mode label =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeMode == mode then " active" else ""))
+    , HE.onClick \_ -> SetScriptInputMode mode
+    ]
+    [ HH.text label ]
+
 renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
 renderMnemonicResult privacyLevel = case _ of
   Nothing ->
@@ -958,6 +999,16 @@ privacyLabel = case _ of
   PrivacyStandard -> "visible"
   PrivacyHidden -> "private"
 
+scriptInputModeLabel :: ScriptInputMode -> String
+scriptInputModeLabel = case _ of
+  ScriptInputCbor -> "Native script CBOR hex"
+  ScriptInputJson -> "Native script JSON"
+
+scriptInputPlaceholder :: ScriptInputMode -> String
+scriptInputPlaceholder = case _ of
+  ScriptInputCbor -> "8200581c..."
+  ScriptInputJson -> "{\"all\":[\"addr_vkh1...\",{\"active_from\":120}]}"
+
 legacyStyleLabel :: Bootstrap.LegacyStyle -> String
 legacyStyleLabel = case _ of
   Bootstrap.LegacyIcarus -> "Icarus"
@@ -1056,7 +1107,7 @@ renderScriptAnalysisResult = case _ of
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
       [ HH.p_
-          [ HH.text "Paste native script CBOR hex to see the derived policy hash and validation result." ]
+          [ HH.text "Paste native script CBOR or JSON to see the derived policy hash, canonical JSON, and script preimage." ]
       ]
   Just (Left err) ->
     HH.div
@@ -1069,7 +1120,8 @@ renderScriptAnalysisResult = case _ of
         , keyValue "Validation" result.validationStatus
         , keyValue "Hash hex" result.hashHex
         , keyValue "Hash bech32" result.hashBech32
-        , keyValue "Canonical CBOR hex" result.canonicalCborHex
+        , keyValue "Canonical JSON" result.canonicalJson
+        , keyValue "Script preimage (CBOR hex)" result.canonicalCborHex
         ]
           <> map renderScriptIssue result.issues
       )

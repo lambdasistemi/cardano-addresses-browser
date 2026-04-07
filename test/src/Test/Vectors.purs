@@ -74,6 +74,7 @@ type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
   , canonicalCborHex :: String
+  , canonicalJson :: String
   , scriptType :: String
   , validationStatus :: String
   , issues :: Array ValidationIssue
@@ -88,6 +89,7 @@ type ValidationIssue =
 type ScriptHashVector =
   { label :: String
   , scriptCborHex :: String
+  , scriptJson :: String
   , expected :: ExpectedScriptHash
   }
 

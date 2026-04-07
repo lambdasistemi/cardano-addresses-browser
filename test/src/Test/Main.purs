@@ -6,7 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
-import Cardano.Address.Script (analyzeNativeScriptHex)
+import Cardano.Address.Script (analyzeNativeScriptHex, analyzeNativeScriptJson)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.ArrayBuffer.Types (Uint8Array)
@@ -87,10 +87,17 @@ parseLegacyNetwork = case _ of
   magic -> Bootstrap.LegacyCustom magic
 
 assertScriptHashVector :: ScriptHashVector -> Effect Unit
-assertScriptHashVector vector =
+assertScriptHashVector vector = do
   case analyzeNativeScriptHex vector.scriptCborHex of
     Right actual | actual == vector.expected -> pure unit
     Right _ ->
       throw ("Script hash vector mismatch: " <> vector.label)
     Left err ->
       throw ("Script hash unexpectedly failed for " <> vector.label <> ": " <> err)
+
+  case analyzeNativeScriptJson vector.scriptJson of
+    Right actual | actual == vector.expected -> pure unit
+    Right _ ->
+      throw ("Script JSON vector mismatch: " <> vector.label)
+    Left err ->
+      throw ("Script JSON unexpectedly failed for " <> vector.label <> ": " <> err)

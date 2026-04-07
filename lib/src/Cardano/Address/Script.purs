@@ -3,6 +3,7 @@ module Cardano.Address.Script
   , ScriptAnalysis
   , analyzeNativeScript
   , analyzeNativeScriptHex
+  , analyzeNativeScriptJson
   ) where
 
 import Prelude
@@ -19,13 +20,16 @@ type ValidationIssue =
   }
 
 type ScriptValidationCore =
-  { scriptType :: String
+  { canonicalBytes :: Uint8Array
+  , canonicalJson :: String
+  , scriptType :: String
   , validationStatus :: String
   , issues :: Array ValidationIssue
   }
 
 type ScriptAnalysis =
   { canonicalCborHex :: String
+  , canonicalJson :: String
   , scriptType :: String
   , validationStatus :: String
   , issues :: Array ValidationIssue
@@ -40,13 +44,20 @@ foreign import analyzeNativeScriptImpl
   -> Uint8Array
   -> r
 
-analyzeNativeScript :: Uint8Array -> Either String ScriptAnalysis
-analyzeNativeScript bytes = do
-  validation <- analyzeNativeScriptImpl Left Right bytes
+foreign import analyzeNativeScriptJsonImpl
+  :: forall r
+   . (String -> r)
+  -> (ScriptValidationCore -> r)
+  -> String
+  -> r
+
+analysisFromCore :: ScriptValidationCore -> ScriptAnalysis
+analysisFromCore validation =
   let
-    hash = ScriptHash.hashNativeScript bytes
-  pure
-    { canonicalCborHex: Hex.toHex bytes
+    hash = ScriptHash.hashNativeScript validation.canonicalBytes
+  in
+    { canonicalCborHex: Hex.toHex validation.canonicalBytes
+    , canonicalJson: validation.canonicalJson
     , scriptType: validation.scriptType
     , validationStatus: validation.validationStatus
     , issues: validation.issues
@@ -54,7 +65,15 @@ analyzeNativeScript bytes = do
     , hashBech32: hash.hashBech32
     }
 
+analyzeNativeScript :: Uint8Array -> Either String ScriptAnalysis
+analyzeNativeScript bytes =
+  analysisFromCore <$> analyzeNativeScriptImpl Left Right bytes
+
 analyzeNativeScriptHex :: String -> Either String ScriptAnalysis
 analyzeNativeScriptHex value = do
   bytes <- Hex.fromHex value
   analyzeNativeScript bytes
+
+analyzeNativeScriptJson :: String -> Either String ScriptAnalysis
+analyzeNativeScriptJson =
+  map analysisFromCore <<< analyzeNativeScriptJsonImpl Left Right
