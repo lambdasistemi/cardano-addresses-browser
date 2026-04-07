@@ -6,7 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
-import Cardano.Address.ScriptHash as ScriptHash
+import Cardano.Address.Script as Script
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
 import Data.Array (length, mapWithIndex)
@@ -89,7 +89,7 @@ type State =
   , legacyCustomMagicInput :: String
   , legacyResult :: Maybe (Either String String)
   , scriptInput :: String
-  , scriptHashResult :: Maybe (Either String ScriptHash.ScriptHashResult)
+  , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
   }
 
 initialState :: State
@@ -115,7 +115,7 @@ initialState =
   , legacyCustomMagicInput: "4242"
   , legacyResult: Nothing
   , scriptInput: ""
-  , scriptHashResult: Nothing
+  , scriptAnalysisResult: Nothing
   }
 
 component :: forall query input output monad. MonadAff monad => H.Component query input output monad
@@ -227,7 +227,7 @@ handleAction = case _ of
     H.modify_ _ { legacyCustomMagicInput = value, legacyNetwork = nextNetwork }
       *> refreshLegacyConstruction
   SetScriptInput value ->
-    H.modify_ _ { scriptInput = value, scriptHashResult = scriptHashStatus value }
+    H.modify_ _ { scriptInput = value, scriptAnalysisResult = scriptAnalysisStatus value }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -295,15 +295,15 @@ refreshLegacyConstruction = do
           Right value -> value
       }
 
-scriptHashStatus :: String -> Maybe (Either String ScriptHash.ScriptHashResult)
-scriptHashStatus value =
+scriptAnalysisStatus :: String -> Maybe (Either String Script.ScriptAnalysis)
+scriptAnalysisStatus value =
   let
     normalized = normalizeHexInput value
   in
     if normalized == "" then
       Nothing
     else
-      Just (ScriptHash.hashNativeScriptHex normalized)
+      Just (Script.analyzeNativeScriptHex normalized)
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -630,7 +630,7 @@ renderScriptsPage state =
     [ sectionCard
         "Native script tools"
         [ HH.p_
-            [ HH.text "Paste native script CBOR as hex to compute the ledger script hash locally in the browser." ]
+            [ HH.text "Paste native script CBOR as hex to compute the ledger script hash, inspect the root script kind, and validate the script locally in the browser." ]
         , HH.textarea
             [ HP.class_ (HH.ClassName "text-input script-input")
             , HP.rows 6
@@ -639,11 +639,11 @@ renderScriptsPage state =
             , HE.onValueInput SetScriptInput
             ]
         , keyValue "Accepted input" "Native script CBOR hex"
-        , keyValue "Output" "Hash hex and script1... bech32"
+        , keyValue "Output" "Hash, validation status, and canonical CBOR"
         ]
     , sectionCard
-        "Script hash"
-        [ renderScriptHashResult state.scriptHashResult
+        "Script analysis"
+        [ renderScriptAnalysisResult state.scriptAnalysisResult
         ]
     ]
 
@@ -1050,13 +1050,13 @@ renderDerivedValue privacyLevel changed label value =
           [ HH.text value ]
     ]
 
-renderScriptHashResult :: forall w. Maybe (Either String ScriptHash.ScriptHashResult) -> HH.HTML w Action
-renderScriptHashResult = case _ of
+renderScriptAnalysisResult :: forall w. Maybe (Either String Script.ScriptAnalysis) -> HH.HTML w Action
+renderScriptAnalysisResult = case _ of
   Nothing ->
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
       [ HH.p_
-          [ HH.text "Paste native script CBOR hex to see the derived policy hash." ]
+          [ HH.text "Paste native script CBOR hex to see the derived policy hash and validation result." ]
       ]
   Just (Left err) ->
     HH.div
@@ -1065,9 +1065,20 @@ renderScriptHashResult = case _ of
   Just (Right result) ->
     HH.div
       [ HP.class_ (HH.ClassName "result-grid") ]
-      [ keyValue "Hash hex" result.hashHex
-      , keyValue "Hash bech32" result.hashBech32
-      ]
+      ( [ keyValue "Script type" result.scriptType
+        , keyValue "Validation" result.validationStatus
+        , keyValue "Hash hex" result.hashHex
+        , keyValue "Hash bech32" result.hashBech32
+        , keyValue "Canonical CBOR hex" result.canonicalCborHex
+        ]
+          <> map renderScriptIssue result.issues
+      )
+
+renderScriptIssue :: forall w. Script.ValidationIssue -> HH.HTML w Action
+renderScriptIssue issue =
+  keyValue
+    ("Issue (" <> issue.level <> " / " <> issue.code <> ")")
+    issue.message
 
 renderLegacyResult :: forall w. Maybe (Either String String) -> HH.HTML w Action
 renderLegacyResult = case _ of

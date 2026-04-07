@@ -7,6 +7,7 @@ module Test.Vectors
   , ExpectedScriptHash
   , InspectionVector
   , ScriptHashVector
+  , ValidationIssue
   , derivationVectors
   , inspectionVectors
   , bootstrapVectors
@@ -72,6 +73,16 @@ type BootstrapVector =
 type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
+  , canonicalCborHex :: String
+  , scriptType :: String
+  , validationStatus :: String
+  , issues :: Array ValidationIssue
+  }
+
+type ValidationIssue =
+  { level :: String
+  , code :: String
+  , message :: String
   }
 
 type ScriptHashVector =

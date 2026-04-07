@@ -48,11 +48,15 @@ import Cardano.Address.KeyHash (
     KeyRole (Payment, Policy),
  )
 import Cardano.Address.Script (
+    ErrRecommendedValidateScript (..),
+    ErrValidateScript (..),
     Script (..),
     ScriptHash (ScriptHash),
+    ValidationLevel (RecommendedValidation, RequiredValidation),
     scriptHashToText,
     serializeScript,
     toScriptHash,
+    validateScript,
  )
 import Cardano.Address.Style.Shelley (
     AddressInfo (..),
@@ -188,10 +192,23 @@ instance ToJSON ScriptHashVector
 data ExpectedScriptHash = ExpectedScriptHash
     { hashHex :: Text
     , hashBech32 :: Text
+    , canonicalCborHex :: Text
+    , scriptType :: Text
+    , validationStatus :: Text
+    , issues :: [ValidationIssue]
     }
     deriving (Eq, Generic, Show)
 
 instance ToJSON ExpectedScriptHash
+
+data ValidationIssue = ValidationIssue
+    { level :: Text
+    , code :: Text
+    , message :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ValidationIssue
 
 data BootstrapVector = BootstrapVector
     { label :: Text
@@ -433,6 +450,18 @@ scriptHashVectorsForMnemonic mnemonicWords =
         , mkScriptHashVector
             (stem <> "-script-some")
             (RequireSomeOf 2 [RequireSignatureOf payment0, RequireSignatureOf payment1, RequireSignatureOf paymentInternal])
+        , mkScriptHashVector
+            (stem <> "-script-empty-all")
+            (RequireAllOf [])
+        , mkScriptHashVector
+            (stem <> "-script-some-zero")
+            (RequireSomeOf 0 [RequireSignatureOf payment0, RequireSignatureOf payment1])
+        , mkScriptHashVector
+            (stem <> "-script-duplicate-sig")
+            (RequireAnyOf [RequireSignatureOf payment0, RequireSignatureOf payment0])
+        , mkScriptHashVector
+            (stem <> "-script-timelock-trap")
+            (RequireAllOf [ActiveFromSlot 500, ActiveUntilSlot 42])
         ]
 
 bootstrapVectorsForMnemonic :: [Text] -> [BootstrapVector]
@@ -625,6 +654,7 @@ mkScriptHashVector :: Text -> Script KeyHash -> ScriptHashVector
 mkScriptHashVector label script =
     let serialized = serializeScript script
         scriptHash = toScriptHash script
+        issues = validationIssues script
      in ScriptHashVector
             { label
             , scriptCborHex = hexText serialized
@@ -632,8 +662,77 @@ mkScriptHashVector label script =
                 ExpectedScriptHash
                     { hashHex = scriptHashHex scriptHash
                     , hashBech32 = scriptHashToText scriptHash Policy Nothing
+                    , canonicalCborHex = hexText serialized
+                    , scriptType = scriptTypeLabel script
+                    , validationStatus =
+                        if null issues
+                            then
+                                "valid"
+                            else
+                                "warning"
+                    , issues
                     }
             }
+
+scriptTypeLabel :: Script elem -> Text
+scriptTypeLabel = \case
+    RequireSignatureOf _ -> "Signature"
+    RequireAllOf _ -> "All"
+    RequireAnyOf _ -> "Any"
+    RequireSomeOf _ _ -> "At least"
+    ActiveFromSlot _ -> "Active from slot"
+    ActiveUntilSlot _ -> "Active until slot"
+
+validationIssues :: Script KeyHash -> [ValidationIssue]
+validationIssues script =
+    case validateScript RequiredValidation script of
+        Left err -> [validationIssue "required" err]
+        Right () ->
+            case validateScript RecommendedValidation script of
+                Left err -> [validationIssue "recommended" err]
+                Right () -> []
+
+validationIssue :: Text -> ErrValidateScript -> ValidationIssue
+validationIssue level err =
+    ValidationIssue
+        { level
+        , code = validationCode err
+        , message = validationMessage err
+        }
+
+validationCode :: ErrValidateScript -> Text
+validationCode = \case
+    Malformed -> "malformed"
+    LedgerIncompatible -> "ledger-incompatible"
+    WrongKeyHash -> "wrong-key-hash"
+    NotUniformKeyType -> "not-uniform-key-type"
+    NotRecommended recommended -> recommendedCode recommended
+
+recommendedCode :: ErrRecommendedValidateScript -> Text
+recommendedCode = \case
+    DuplicateSignatures -> "duplicate-signatures"
+    EmptyList -> "empty-list"
+    ListTooSmall -> "list-too-small"
+    MZero -> "m-zero"
+    RedundantTimelocks -> "redundant-timelocks"
+    TimelockTrap -> "timelock-trap"
+
+validationMessage :: ErrValidateScript -> Text
+validationMessage = \case
+    Malformed -> "Script is malformed."
+    LedgerIncompatible -> "Script is not ledger-compatible."
+    WrongKeyHash -> "Signature script key hash must be 28 bytes."
+    NotUniformKeyType -> "Script mixes incompatible key hash types."
+    NotRecommended recommended -> recommendedMessage recommended
+
+recommendedMessage :: ErrRecommendedValidateScript -> Text
+recommendedMessage = \case
+    DuplicateSignatures -> "Script repeats the same signature requirement."
+    EmptyList -> "Script list should not be empty."
+    ListTooSmall -> "At least threshold exceeds the number of child scripts."
+    MZero -> "At least scripts should require at least one branch."
+    RedundantTimelocks -> "Script contains redundant timelock constraints."
+    TimelockTrap -> "Timelock constraints cannot be satisfied together."
 
 mkIcarusBootstrapVector ::
     Text ->

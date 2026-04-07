@@ -6,7 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
-import Cardano.Address.ScriptHash (hashNativeScriptHex)
+import Cardano.Address.Script (analyzeNativeScriptHex)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.ArrayBuffer.Types (Uint8Array)
@@ -88,7 +88,7 @@ parseLegacyNetwork = case _ of
 
 assertScriptHashVector :: ScriptHashVector -> Effect Unit
 assertScriptHashVector vector =
-  case hashNativeScriptHex vector.scriptCborHex of
+  case analyzeNativeScriptHex vector.scriptCborHex of
     Right actual | actual == vector.expected -> pure unit
     Right _ ->
       throw ("Script hash vector mismatch: " <> vector.label)
