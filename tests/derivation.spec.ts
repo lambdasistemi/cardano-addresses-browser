@@ -24,12 +24,10 @@ test("derivation page is reactive and hides values in private mode", async ({
   );
   await mnemonicInput.fill(mnemonic);
 
-  await expect(
-    page.getByText("Value hidden in private mode. Use Copy to move it to the clipboard.").first(),
-  ).toBeVisible();
-  await expect(page.getByText(firstAddressPublicKey)).toHaveCount(0);
+  await expect(page.getByText("Private key hidden for this card. Use Show or Copy.").first()).toBeVisible();
+  await expect(page.getByText(firstAddressPublicKey)).toBeVisible();
 
-  await page.getByRole("button", { name: "Visible" }).click();
+  await page.getByRole("button", { name: "Show private keys" }).click();
   await expect(page.getByText(firstAddressPublicKey)).toBeVisible();
 
   await page.getByRole("spinbutton", { name: "Address index" }).fill("1");
@@ -50,7 +48,7 @@ test("restore page switches family semantics from the same mnemonic", async ({
   );
   await mnemonicInput.fill(mnemonic);
 
-  await page.getByRole("button", { name: "Visible" }).click();
+  await page.getByRole("button", { name: "Show private keys" }).click();
   await expect(page.getByText(firstAddressPublicKey)).toBeVisible();
 
   await page.getByRole("button", { name: "Icarus" }).click();
@@ -60,10 +58,4 @@ test("restore page switches family semantics from the same mnemonic", async ({
   await page.getByRole("button", { name: "Byron" }).click();
   await expect(page.getByText(byronAddress)).toBeVisible();
   await expect(page.getByText(icarusAddress)).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Private" }).click();
-  await expect(page.getByText(byronAddress)).toHaveCount(0);
-  await expect(
-    page.getByText("Value hidden in private mode. Use Copy to move it to the clipboard.").first(),
-  ).toBeVisible();
 });
