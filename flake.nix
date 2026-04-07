@@ -38,6 +38,7 @@
           '';
         in
         {
+          packages.playwright-browsers = pkgs.playwright-driver.browsers;
           packages.test-vectors-exe = haskellProject.packages.test-vectors-exe;
           packages.test-vectors = test-vectors-json;
           devShells.default = pkgs.mkShell {
