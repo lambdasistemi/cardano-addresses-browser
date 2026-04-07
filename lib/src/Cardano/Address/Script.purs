@@ -1,9 +1,11 @@
 module Cardano.Address.Script
   ( ValidationIssue
   , ScriptAnalysis
+  , ScriptTemplateAnalysis
   , analyzeNativeScript
   , analyzeNativeScriptHex
   , analyzeNativeScriptJson
+  , analyzeScriptTemplateJson
   ) where
 
 import Prelude
@@ -37,6 +39,14 @@ type ScriptAnalysis =
   , hashBech32 :: String
   }
 
+type ScriptTemplateAnalysis =
+  { canonicalTemplateJson :: String
+  , templateValidationStatus :: String
+  , templateIssues :: Array ValidationIssue
+  , hasDerivedScript :: Boolean
+  , derivedScript :: ScriptAnalysis
+  }
+
 foreign import analyzeNativeScriptImpl
   :: forall r
    . (String -> r)
@@ -48,6 +58,13 @@ foreign import analyzeNativeScriptJsonImpl
   :: forall r
    . (String -> r)
   -> (ScriptValidationCore -> r)
+  -> String
+  -> r
+
+foreign import analyzeScriptTemplateJsonImpl
+  :: forall r
+   . (String -> r)
+  -> (ScriptTemplateAnalysis -> r)
   -> String
   -> r
 
@@ -77,3 +94,7 @@ analyzeNativeScriptHex value = do
 analyzeNativeScriptJson :: String -> Either String ScriptAnalysis
 analyzeNativeScriptJson =
   map analysisFromCore <<< analyzeNativeScriptJsonImpl Left Right
+
+analyzeScriptTemplateJson :: String -> Either String ScriptTemplateAnalysis
+analyzeScriptTemplateJson =
+  analyzeScriptTemplateJsonImpl Left Right

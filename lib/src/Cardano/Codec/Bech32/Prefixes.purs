@@ -6,7 +6,9 @@ module Cardano.Codec.Bech32.Prefixes
   , stake
   , stake_test
   , addr_vkh
+  , addr_shared_vkh
   , stake_vkh
+  , stake_shared_vkh
   , script
   ) where
 
@@ -31,8 +33,14 @@ stake_test = "stake_test"
 addr_vkh :: String
 addr_vkh = "addr_vkh"
 
+addr_shared_vkh :: String
+addr_shared_vkh = "addr_shared_vkh"
+
 stake_vkh :: String
 stake_vkh = "stake_vkh"
+
+stake_shared_vkh :: String
+stake_shared_vkh = "stake_shared_vkh"
 
 script :: String
 script = "script"

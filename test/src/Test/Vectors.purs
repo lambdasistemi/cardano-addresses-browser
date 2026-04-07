@@ -5,13 +5,16 @@ module Test.Vectors
   , ExpectedAddressInfo
   , ExpectedKeys
   , ExpectedScriptHash
+  , ExpectedScriptTemplate
   , InspectionVector
   , ScriptHashVector
+  , ScriptTemplateVector
   , ValidationIssue
   , derivationVectors
   , inspectionVectors
   , bootstrapVectors
   , scriptHashVectors
+  , scriptTemplateVectors
   ) where
 
 import Data.Maybe (Maybe)
@@ -93,6 +96,20 @@ type ScriptHashVector =
   , expected :: ExpectedScriptHash
   }
 
+type ExpectedScriptTemplate =
+  { canonicalTemplateJson :: String
+  , templateValidationStatus :: String
+  , templateIssues :: Array ValidationIssue
+  , hasDerivedScript :: Boolean
+  , derivedScript :: ExpectedScriptHash
+  }
+
+type ScriptTemplateVector =
+  { label :: String
+  , templateJson :: String
+  , expected :: ExpectedScriptTemplate
+  }
+
 foreign import derivationVectors :: Array DerivationVector
 
 foreign import inspectionVectors :: Array InspectionVector
@@ -100,3 +117,5 @@ foreign import inspectionVectors :: Array InspectionVector
 foreign import bootstrapVectors :: Array BootstrapVector
 
 foreign import scriptHashVectors :: Array ScriptHashVector
+
+foreign import scriptTemplateVectors :: Array ScriptTemplateVector
