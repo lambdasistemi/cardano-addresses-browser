@@ -111,6 +111,7 @@ data Vectors = Vectors
     { derivationVectors :: [DerivationVector]
     , inspectionVectors :: [InspectionVector]
     , scriptHashVectors :: [ScriptHashVector]
+    , bootstrapVectors :: [BootstrapVector]
     }
     deriving (Eq, Generic, Show)
 
@@ -191,6 +192,20 @@ data ExpectedScriptHash = ExpectedScriptHash
 
 instance ToJSON ExpectedScriptHash
 
+data BootstrapVector = BootstrapVector
+    { label :: Text
+    , style :: Text
+    , network :: Text
+    , protocolMagic :: Int
+    , addressXPubBech32 :: Text
+    , rootXPubBech32 :: Maybe Text
+    , derivationPath :: Maybe Text
+    , expectedAddressBase58 :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON BootstrapVector
+
 main :: IO ()
 main = BL.putStr (encode vectors)
 
@@ -203,6 +218,8 @@ vectors =
             concatMap inspectionVectorsForMnemonic mnemonics
         , scriptHashVectors =
             concatMap scriptHashVectorsForMnemonic mnemonics
+        , bootstrapVectors =
+            concatMap bootstrapVectorsForMnemonic mnemonics
         }
 
 mnemonics :: [[Text]]
@@ -417,6 +434,56 @@ scriptHashVectorsForMnemonic mnemonicWords =
             (RequireSomeOf 2 [RequireSignatureOf payment0, RequireSignatureOf payment1, RequireSignatureOf paymentInternal])
         ]
 
+bootstrapVectorsForMnemonic :: [Text] -> [BootstrapVector]
+bootstrapVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        icarusRoot = icarusRootKeyFromMnemonic mnemonicWords
+        icarusAccount0 = icarusAccountKey icarusRoot 0
+        icarusExternal0 = icarusAddressKey icarusAccount0 Icarus.UTxOExternal 0
+        icarusInternal7 = icarusAddressKey icarusAccount0 Icarus.UTxOInternal 7
+        byronRoot = byronRootKeyFromMnemonic mnemonicWords
+        byronRootXPub = toXPub <$> byronRoot
+        byronAccount0 = byronAccountKey byronRoot 0
+        byronAddress0 = byronAddressKey byronAccount0 0
+        byronAddress14 = byronAddressKey byronAccount0 14
+     in [ mkIcarusBootstrapVector
+            (stem <> "-icarus-mainnet-bootstrap")
+            "mainnet"
+            764824073
+            (toXPub <$> icarusExternal0)
+            (Icarus.paymentAddress Icarus.icarusMainnet (toXPub <$> icarusExternal0))
+        , mkIcarusBootstrapVector
+            (stem <> "-icarus-preview-bootstrap")
+            "preview"
+            2
+            (toXPub <$> icarusInternal7)
+            (Icarus.paymentAddress Icarus.icarusPreview (toXPub <$> icarusInternal7))
+        , mkByronBootstrapVector
+            (stem <> "-byron-mainnet-bootstrap")
+            "mainnet"
+            764824073
+            byronRootXPub
+            (toXPub <$> byronAddress0)
+            "0H/0"
+            (Byron.paymentAddress Byron.byronMainnet (toXPub <$> byronAddress0))
+        , mkByronBootstrapVector
+            (stem <> "-byron-testnet-bootstrap")
+            "testnet"
+            1097911063
+            byronRootXPub
+            (toXPub <$> byronAddress14)
+            "0H/14"
+            (Byron.paymentAddress Byron.byronTestnet (toXPub <$> byronAddress14))
+        , mkByronBootstrapVector
+            (stem <> "-byron-preprod-bootstrap")
+            "preprod"
+            1
+            byronRootXPub
+            (toXPub <$> byronAddress0)
+            "0H/0"
+            (Byron.paymentAddress Byron.byronPreprod (toXPub <$> byronAddress0))
+        ]
+
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector
 mkDerivationVector mnemonicWords accountIx roleName addressIx =
     let root = rootKeyFromMnemonic mnemonicWords
@@ -545,6 +612,46 @@ mkScriptHashVector label script =
                     }
             }
 
+mkIcarusBootstrapVector ::
+    Text ->
+    Text ->
+    Int ->
+    Icarus.Icarus 'PaymentK XPub ->
+    Address ->
+    BootstrapVector
+mkIcarusBootstrapVector label network protocolMagic addressXPub expectedAddress =
+    BootstrapVector
+        { label
+        , style = "Icarus"
+        , network
+        , protocolMagic
+        , addressXPubBech32 = bech32With CIP5.addr_xvk (icarusXPubAddress addressXPub)
+        , rootXPubBech32 = Nothing
+        , derivationPath = Nothing
+        , expectedAddressBase58 = base58 expectedAddress
+        }
+
+mkByronBootstrapVector ::
+    Text ->
+    Text ->
+    Int ->
+    Byron.Byron 'RootK XPub ->
+    Byron.Byron 'PaymentK XPub ->
+    Text ->
+    Address ->
+    BootstrapVector
+mkByronBootstrapVector label network protocolMagic rootXPub addressXPub derivationPath expectedAddress =
+    BootstrapVector
+        { label
+        , style = "Byron"
+        , network
+        , protocolMagic
+        , addressXPubBech32 = bech32With CIP5.addr_xvk (byronXPubAddress addressXPub)
+        , rootXPubBech32 = Just (bech32With CIP5.root_xvk (byronXPubAddress rootXPub))
+        , derivationPath = Just derivationPath
+        , expectedAddressBase58 = base58 expectedAddress
+        }
+
 toExpectedAddressInfo :: AddressInfo -> ExpectedAddressInfo
 toExpectedAddressInfo AddressInfo{..} =
     ExpectedAddressInfo
@@ -656,6 +763,12 @@ xprvAddress = unsafeMkAddress . xprvToBytes . getKey
 
 xpubAddress :: Shelley depth XPub -> Address
 xpubAddress = unsafeMkAddress . xpubToBytes . getKey
+
+icarusXPubAddress :: Icarus.Icarus depth XPub -> Address
+icarusXPubAddress = unsafeMkAddress . xpubToBytes . Icarus.getKey
+
+byronXPubAddress :: Byron.Byron depth XPub -> Address
+byronXPubAddress = unsafeMkAddress . xpubToBytes . Byron.getKey
 
 scriptHashHex :: ScriptHash -> Text
 scriptHashHex (ScriptHash bytes) = hexText bytes
