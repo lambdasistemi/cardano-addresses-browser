@@ -36,12 +36,6 @@ data Page
 
 derive instance eqPage :: Eq Page
 
-data PrivacyLevel
-  = PrivacyStandard
-  | PrivacyHidden
-
-derive instance eqPrivacyLevel :: Eq PrivacyLevel
-
 data RestoreFamily
   = RestoreShelley
   | RestoreIcarus
@@ -65,7 +59,8 @@ data Action
   | CopyMnemonic
   | CopyValue String
   | ToggleStatePanel
-  | SetPrivacyLevel PrivacyLevel
+  | ToggleRestorePhraseVisibility
+  | ToggleDerivedKeysVisibility
   | SetDerivationInput String
   | UseGeneratedMnemonic
   | SetRestoreFamily RestoreFamily
@@ -90,7 +85,8 @@ type State =
   , mnemonicWordCount :: Int
   , generatedMnemonic :: Maybe (Array String)
   , showStatePanel :: Boolean
-  , privacyLevel :: PrivacyLevel
+  , showRestorePhrase :: Boolean
+  , showDerivedKeys :: Boolean
   , derivationInput :: String
   , restoreFamily :: RestoreFamily
   , accountIndexInput :: String
@@ -120,7 +116,8 @@ initialState =
   , mnemonicWordCount: 24
   , generatedMnemonic: Nothing
   , showStatePanel: false
-  , privacyLevel: PrivacyHidden
+  , showRestorePhrase: false
+  , showDerivedKeys: false
   , derivationInput: ""
   , restoreFamily: RestoreShelley
   , accountIndexInput: "0"
@@ -182,16 +179,20 @@ handleAction = case _ of
     refreshDerivation
   CopyMnemonic -> do
     state <- H.get
-    case state.generatedMnemonic of
-      Nothing -> pure unit
-      Just words ->
-        liftEffect (copyToClipboard (joinWith " " words))
+    let
+      normalizedPhrase = joinWith " " (normalizeMnemonicInput state.derivationInput)
+    if normalizedPhrase == "" then
+      pure unit
+    else
+      liftEffect (copyToClipboard normalizedPhrase)
   CopyValue value ->
     liftEffect (copyToClipboard value)
   ToggleStatePanel ->
     H.modify_ \state -> state { showStatePanel = not state.showStatePanel }
-  SetPrivacyLevel privacyLevel ->
-    H.modify_ _ { privacyLevel = privacyLevel }
+  ToggleRestorePhraseVisibility ->
+    H.modify_ \state -> state { showRestorePhrase = not state.showRestorePhrase }
+  ToggleDerivedKeysVisibility ->
+    H.modify_ \state -> state { showDerivedKeys = not state.showDerivedKeys }
   SetDerivationInput value ->
     H.modify_ _ { derivationInput = value }
       *> refreshDerivation
@@ -209,10 +210,10 @@ handleAction = case _ of
     H.modify_ _ { restoreFamily = family, derivationRole = normalizeRoleForFamily family state.derivationRole }
       *> refreshDerivation
   SetAccountIndexInput value ->
-    H.modify_ _ { accountIndexInput = value }
+    H.modify_ _ { accountIndexInput = normalizeIndexInput value }
       *> refreshDerivation
   SetAddressIndexInput value ->
-    H.modify_ _ { addressIndexInput = value }
+    H.modify_ _ { addressIndexInput = normalizeIndexInput value }
       *> refreshDerivation
   SetDerivationRole role ->
     H.modify_ _ { derivationRole = role }
@@ -460,18 +461,6 @@ renderTopbar state =
         , badge "Offline-first"
         , HH.button
             [ HP.class_
-                (HH.ClassName ("secondary-btn" <> if state.privacyLevel == PrivacyStandard then " active" else ""))
-            , HE.onClick \_ -> SetPrivacyLevel PrivacyStandard
-            ]
-            [ HH.text "Visible" ]
-        , HH.button
-            [ HP.class_
-                (HH.ClassName ("secondary-btn" <> if state.privacyLevel == PrivacyHidden then " active" else ""))
-            , HE.onClick \_ -> SetPrivacyLevel PrivacyHidden
-            ]
-            [ HH.text "Private" ]
-        , HH.button
-            [ HP.class_
                 (HH.ClassName ("secondary-btn" <> if state.showStatePanel then " active" else ""))
             , HE.onClick \_ -> ToggleStatePanel
             ]
@@ -483,7 +472,7 @@ renderActivePage :: forall w. State -> HH.HTML w Action
 renderActivePage state = case state.activePage of
   Overview -> renderOverview
   Inspect -> renderInspectPage state
-  Mnemonic -> renderMnemonicPage state
+  Mnemonic -> renderDerivationPage state
   Derivation -> renderDerivationPage state
   Legacy -> renderLegacyPage state
   Scripts -> renderScriptsPage state
@@ -572,7 +561,7 @@ renderMnemonicPage state =
         ]
     , sectionCard
         "Generated phrase"
-        [ renderMnemonicResult state.privacyLevel state.generatedMnemonic ]
+        [ renderMnemonicResult state.showRestorePhrase state.derivationInput ]
     ]
 
 renderDerivationPage :: forall w. State -> HH.HTML w Action
@@ -585,19 +574,46 @@ renderDerivationPage state =
             [ HH.text "Choose the wallet family first, then restore or build from the recovery phrase you actually have." ]
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> ToggleRestorePhraseVisibility
+                ]
+                [ HH.text (if state.showRestorePhrase then "Hide phrase" else "Show phrase") ]
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
             [ renderRestoreFamilyButton state.restoreFamily RestoreShelley
             , renderRestoreFamilyButton state.restoreFamily RestoreIcarus
             , renderRestoreFamilyButton state.restoreFamily RestoreByron
             ]
-        , renderDerivationInput state
         , HH.div
-            [ HP.class_ (HH.ClassName "action-row") ]
-            [ HH.button
-                [ HP.class_ (HH.ClassName "secondary-btn")
-                , HE.onClick \_ -> UseGeneratedMnemonic
+            [ HP.class_ (HH.ClassName "mnemonic-controls") ]
+            [ HH.p_
+                [ HH.text "Generate a fresh phrase here when you are starting from mnemonic material. Generation immediately feeds the restore input below." ]
+            , HH.div
+                [ HP.class_ (HH.ClassName "action-row") ]
+                (map (renderWordCountButton state.mnemonicWordCount) mnemonicWordCounts)
+            , HH.div
+                [ HP.class_ (HH.ClassName "action-row") ]
+                [ HH.button
+                    [ HP.class_ (HH.ClassName "primary-btn")
+                    , HE.onClick \_ -> GenerateMnemonic
+                    ]
+                    [ HH.text "Generate phrase" ]
+                , HH.button
+                    [ HP.class_ (HH.ClassName "secondary-btn")
+                    , HE.onClick \_ -> ToggleRestorePhraseVisibility
+                    ]
+                    [ HH.text (if state.showRestorePhrase then "Hide phrase" else "Show phrase") ]
+                , HH.button
+                    [ HP.class_ (HH.ClassName "secondary-btn")
+                    , HE.onClick \_ -> CopyMnemonic
+                    ]
+                    [ HH.text "Copy phrase" ]
                 ]
-                [ HH.text "Use generated phrase" ]
+            , renderMnemonicResult state.showRestorePhrase state.derivationInput
             ]
+        , renderDerivationInput state
         , HH.div
             [ HP.class_ (HH.ClassName "derivation-controls") ]
             [ HH.label
@@ -606,6 +622,7 @@ renderDerivationPage state =
                 , HH.input
                     [ HP.class_ (HH.ClassName "inline-input")
                     , HP.type_ HP.InputNumber
+                    , HP.min 0.0
                     , HP.value state.accountIndexInput
                     , HE.onValueInput SetAccountIndexInput
                     ]
@@ -616,6 +633,7 @@ renderDerivationPage state =
                 , HH.input
                     [ HP.class_ (HH.ClassName "inline-input")
                     , HP.type_ HP.InputNumber
+                    , HP.min 0.0
                     , HP.value state.addressIndexInput
                     , HE.onValueInput SetAddressIndexInput
                     ]
@@ -661,9 +679,9 @@ renderDerivationPage state =
         (restoreOutputTitle state.restoreFamily)
         [ case state.restoreFamily of
             RestoreShelley ->
-              renderDerivationResult state.privacyLevel state.previousDerivedKeys state.derivationResult
+              renderDerivationResult state.showDerivedKeys state.previousDerivedKeys state.derivationResult
             _ ->
-              renderFamilyRestoreResult state.privacyLevel state.familyRestoreResult
+              renderFamilyRestoreResult state.familyRestoreResult
         ]
     ]
 
@@ -746,7 +764,7 @@ renderLegacyPage state =
 
 renderDerivationInput :: forall w. State -> HH.HTML w Action
 renderDerivationInput state =
-  if state.privacyLevel == PrivacyHidden then
+  if not state.showRestorePhrase then
     HH.div_
       [ HH.input
           [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
@@ -757,15 +775,17 @@ renderDerivationInput state =
           ]
       , HH.div
           [ HP.class_ (HH.ClassName "privacy-note") ]
-          [ HH.p_ [ HH.text "Private mode masks the recovery phrase while keeping paste and derivation available." ] ]
+          [ HH.p_ [ HH.text "This card is hidden while keeping paste and derivation available." ] ]
       ]
   else
-    HH.textarea
-      [ HP.class_ (HH.ClassName "text-input derivation-input")
-      , HP.rows 6
-      , HP.placeholder "abandon abandon ... or use the generated phrase"
-      , HP.value state.derivationInput
-      , HE.onValueInput SetDerivationInput
+    HH.div_
+      [ HH.textarea
+          [ HP.class_ (HH.ClassName "text-input derivation-input")
+          , HP.rows 6
+          , HP.placeholder "abandon abandon ... or use the generated phrase"
+          , HP.value state.derivationInput
+          , HE.onValueInput SetDerivationInput
+          ]
       ]
 
 renderScriptsPage :: forall w. State -> HH.HTML w Action
@@ -827,11 +847,10 @@ renderStatePanel state =
       , HH.div
           [ HP.class_ (HH.ClassName "result-grid") ]
           [ keyValue "Active page" (pageTitle state.activePage)
-          , keyValue "Privacy" (privacyLabel state.privacyLevel)
           , keyValue "Inspect input length" (show (String.length state.inspectInput))
           , keyValue "Inspect result" (inspectStatus state.inspectResult)
           , keyValue "Mnemonic word count" (show state.mnemonicWordCount)
-          , keyValue "Mnemonic phrase" (mnemonicStatus state.privacyLevel state.generatedMnemonic)
+          , keyValue "Mnemonic phrase" (mnemonicStatus state.showRestorePhrase state.derivationInput)
           , keyValue "Restore family" (restoreFamilyLabel state.restoreFamily)
           , keyValue "Derivation role" (Derivation.roleLabel state.derivationRole)
           , keyValue "Restore path" (restorePathSummary state)
@@ -1016,36 +1035,31 @@ renderScriptModeButton activeMode mode label =
     ]
     [ HH.text label ]
 
-renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
-renderMnemonicResult privacyLevel = case _ of
-  Nothing ->
-    HH.div
-      [ HP.class_ (HH.ClassName "empty-state") ]
-      [ HH.p_
-          [ HH.text "No mnemonic generated yet. Choose a word count and generate a phrase." ]
-      ]
-  Just words ->
-    HH.div
-      [ HP.class_ (HH.ClassName "mnemonic-result") ]
-      [ HH.div
-          [ HP.class_ (HH.ClassName "action-row") ]
-          [ HH.button
-              [ HP.class_ (HH.ClassName "primary-btn")
-              , HE.onClick \_ -> CopyMnemonic
+renderMnemonicResult :: forall w. Boolean -> String -> HH.HTML w Action
+renderMnemonicResult isVisible derivationInput =
+  let
+    words = normalizeMnemonicInput derivationInput
+  in
+    if length words == 0 then
+      HH.div
+        [ HP.class_ (HH.ClassName "empty-state") ]
+        [ HH.p_
+            [ HH.text "No recovery phrase loaded yet. Generate one here or paste one below." ]
+        ]
+    else
+      HH.div
+        [ HP.class_ (HH.ClassName "mnemonic-result") ]
+        [ if not isVisible then
+            HH.div
+              [ HP.class_ (HH.ClassName "privacy-note") ]
+              [ HH.p_
+                  [ HH.text ("Phrase hidden. " <> show (length words) <> " words are available for clipboard copy.") ]
               ]
-              [ HH.text "Copy phrase" ]
-          ]
-      , if privacyLevel == PrivacyHidden then
-          HH.div
-            [ HP.class_ (HH.ClassName "privacy-note") ]
-            [ HH.p_
-                [ HH.text ("Phrase hidden. " <> show (length words) <> " words are available for clipboard copy.") ]
-            ]
-        else
-          HH.div
-            [ HP.class_ (HH.ClassName "mnemonic-grid") ]
-            (map renderMnemonicWord (zipWithIndex words))
-      ]
+          else
+            HH.div
+              [ HP.class_ (HH.ClassName "mnemonic-grid") ]
+              (map renderMnemonicWord (zipWithIndex words))
+        ]
 
 renderMnemonicWord :: forall w. { index :: Int, word :: String } -> HH.HTML w Action
 renderMnemonicWord item =
@@ -1133,19 +1147,17 @@ familyRestoreStatus = case _ of
   Just (Left _) -> "error"
   Just (Right _) -> "derived"
 
-mnemonicStatus :: PrivacyLevel -> Maybe (Array String) -> String
-mnemonicStatus privacyLevel = case _ of
-  Nothing -> "empty"
-  Just words ->
-    if privacyLevel == PrivacyHidden then
-      show (length words) <> " words generated, hidden"
+mnemonicStatus :: Boolean -> String -> String
+mnemonicStatus isVisible derivationInput =
+  let
+    words = normalizeMnemonicInput derivationInput
+  in
+    if length words == 0 then
+      "empty"
+    else if not isVisible then
+      show (length words) <> " words loaded, hidden"
     else
-      show (length words) <> " words generated"
-
-privacyLabel :: PrivacyLevel -> String
-privacyLabel = case _ of
-  PrivacyStandard -> "visible"
-  PrivacyHidden -> "private"
+      show (length words) <> " words loaded"
 
 restoreFamilyLabel :: RestoreFamily -> String
 restoreFamilyLabel = case _ of
@@ -1254,13 +1266,16 @@ rolePathSegment = case _ of
   Derivation.UTxOInternal -> "1"
   Derivation.Stake -> "2"
 
+normalizeIndexInput :: String -> String
+normalizeIndexInput value = show (parseIndexInput value)
+
 renderDerivationResult
   :: forall w
-   . PrivacyLevel
+   . Boolean
   -> Maybe Derivation.DerivedKeys
   -> Maybe (Either String Derivation.DerivedKeys)
   -> HH.HTML w Action
-renderDerivationResult privacyLevel previousKeys = case _ of
+renderDerivationResult isVisible previousKeys = case _ of
   Nothing ->
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
@@ -1274,12 +1289,20 @@ renderDerivationResult privacyLevel previousKeys = case _ of
   Just (Right keys) ->
     HH.div
       [ HP.class_ (HH.ClassName "derivation-result") ]
-      [ renderDerivedValue privacyLevel (hasChanged previousKeys _.rootKeyBech32 keys) "Root private key" keys.rootKeyBech32
-      , renderDerivedValue privacyLevel (hasChanged previousKeys _.accountKeyBech32 keys) "Account private key" keys.accountKeyBech32
-      , renderDerivedValue privacyLevel (hasChanged previousKeys _.addressKeyBech32 keys) "Address private key" keys.addressKeyBech32
-      , renderDerivedValue privacyLevel (hasChanged previousKeys _.addressPublicKeyBech32 keys) "Address public key" keys.addressPublicKeyBech32
-      , renderDerivedValue privacyLevel (hasChanged previousKeys _.stakeKeyBech32 keys) "Stake private key" keys.stakeKeyBech32
-      , renderDerivedValue privacyLevel (hasChanged previousKeys _.stakePublicKeyBech32 keys) "Stake public key" keys.stakePublicKeyBech32
+      [ HH.div
+          [ HP.class_ (HH.ClassName "action-row") ]
+          [ HH.button
+              [ HP.class_ (HH.ClassName "secondary-btn")
+              , HE.onClick \_ -> ToggleDerivedKeysVisibility
+              ]
+              [ HH.text (if isVisible then "Hide private keys" else "Show private keys") ]
+          ]
+      , renderDerivedSecretValue isVisible (hasChanged previousKeys _.rootKeyBech32 keys) "Root private key" keys.rootKeyBech32
+      , renderDerivedSecretValue isVisible (hasChanged previousKeys _.accountKeyBech32 keys) "Account private key" keys.accountKeyBech32
+      , renderDerivedSecretValue isVisible (hasChanged previousKeys _.addressKeyBech32 keys) "Address private key" keys.addressKeyBech32
+      , renderDerivedPublicValue (hasChanged previousKeys _.addressPublicKeyBech32 keys) "Address public key" keys.addressPublicKeyBech32
+      , renderDerivedSecretValue isVisible (hasChanged previousKeys _.stakeKeyBech32 keys) "Stake private key" keys.stakeKeyBech32
+      , renderDerivedPublicValue (hasChanged previousKeys _.stakePublicKeyBech32 keys) "Stake public key" keys.stakePublicKeyBech32
       ]
 
 hasChanged
@@ -1291,8 +1314,8 @@ hasChanged previousKeys project currentKeys = case previousKeys of
   Nothing -> false
   Just oldKeys -> project oldKeys /= project currentKeys
 
-renderDerivedValue :: forall w. PrivacyLevel -> Boolean -> String -> String -> HH.HTML w Action
-renderDerivedValue privacyLevel changed label value =
+renderDerivedSecretValue :: forall w. Boolean -> Boolean -> String -> String -> HH.HTML w Action
+renderDerivedSecretValue isVisible changed label value =
   HH.div
     [ HP.class_ (HH.ClassName ("output-card" <> if changed then " changed" else "")) ]
     [ HH.div
@@ -1307,10 +1330,10 @@ renderDerivedValue privacyLevel changed label value =
                 [ HH.text "Copy" ]
             ]
         ]
-    , if privacyLevel == PrivacyHidden then
+    , if not isVisible then
         HH.div
           [ HP.class_ (HH.ClassName "privacy-note") ]
-          [ HH.p_ [ HH.text "Value hidden in private mode. Use Copy to move it to the clipboard." ] ]
+          [ HH.p_ [ HH.text "Private key hidden for this card. Use Show or Copy." ] ]
       else
         HH.div
           [ HP.class_ (HH.ClassName "output-value")
@@ -1319,8 +1342,31 @@ renderDerivedValue privacyLevel changed label value =
           [ HH.text value ]
     ]
 
-renderFamilyRestoreResult :: forall w. PrivacyLevel -> Maybe (Either String String) -> HH.HTML w Action
-renderFamilyRestoreResult privacyLevel = case _ of
+renderDerivedPublicValue :: forall w. Boolean -> String -> String -> HH.HTML w Action
+renderDerivedPublicValue changed label value =
+  HH.div
+    [ HP.class_ (HH.ClassName ("output-card" <> if changed then " changed" else "")) ]
+    [ HH.div
+        [ HP.class_ (HH.ClassName "output-meta") ]
+        [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "output-actions") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> CopyValue value
+                ]
+                [ HH.text "Copy" ]
+            ]
+        ]
+    , HH.div
+        [ HP.class_ (HH.ClassName "output-value")
+        , HP.title value
+        ]
+        [ HH.text value ]
+    ]
+
+renderFamilyRestoreResult :: forall w. Maybe (Either String String) -> HH.HTML w Action
+renderFamilyRestoreResult = case _ of
   Nothing ->
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
@@ -1348,16 +1394,11 @@ renderFamilyRestoreResult privacyLevel = case _ of
                       [ HH.text "Copy" ]
                   ]
               ]
-          , if privacyLevel == PrivacyHidden then
-              HH.div
-                [ HP.class_ (HH.ClassName "privacy-note") ]
-                [ HH.p_ [ HH.text "Value hidden in private mode. Use Copy to move it to the clipboard." ] ]
-            else
-              HH.div
-                [ HP.class_ (HH.ClassName "output-value")
-                , HP.title address
-                ]
-                [ HH.text address ]
+          , HH.div
+              [ HP.class_ (HH.ClassName "output-value")
+              , HP.title address
+              ]
+              [ HH.text address ]
           ]
       ]
 
@@ -1472,7 +1513,6 @@ navItems :: Array NavItem
 navItems =
   [ { page: Overview, label: "Overview", note: "Workspace health" }
   , { page: Inspect, label: "Inspect", note: "Decode addresses" }
-  , { page: Mnemonic, label: "Mnemonic", note: "Generate recovery phrases" }
   , { page: Derivation, label: "Restore", note: "Choose family first" }
   , { page: Legacy, label: "Expert", note: "Manual bootstrap xpubs" }
   , { page: Scripts, label: "Scripts", note: "Hash native scripts" }
@@ -1483,7 +1523,7 @@ pageTitle :: Page -> String
 pageTitle = case _ of
   Overview -> "Project Overview"
   Inspect -> "Address Inspection"
-  Mnemonic -> "Mnemonic Generation"
+  Mnemonic -> "Restore And Build"
   Derivation -> "Restore And Build"
   Legacy -> "Manual Bootstrap Construction"
   Scripts -> "Native Scripts"
