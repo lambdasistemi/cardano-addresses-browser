@@ -28,4 +28,5 @@ executable cardano-addresses-browser-vectors
     , cardano-addresses >= 4.0 && < 4.1
     , cborg >= 0.2 && < 0.3
     , containers >= 0.6 && < 0.7
+    , memory >= 0.18 && < 0.19
     , text >= 2.0 && < 2.2

@@ -9,6 +9,7 @@ module Test.Vectors
   , FamilyRestoreVector
   , InspectionVector
   , ShelleyRestoreVector
+  , SigningVector
   , ScriptHashVector
   , ScriptTemplateVector
   , ValidationIssue
@@ -17,6 +18,7 @@ module Test.Vectors
   , bootstrapVectors
   , familyRestoreVectors
   , shelleyRestoreVectors
+  , signingVectors
   , scriptHashVectors
   , scriptTemplateVectors
   ) where
@@ -102,6 +104,15 @@ type ShelleyRestoreVector =
   , rewardAddressBech32 :: String
   }
 
+type SigningVector =
+  { label :: String
+  , payloadMode :: String
+  , payloadInput :: String
+  , signingKeyBech32 :: String
+  , verificationKeyBech32 :: String
+  , signatureHex :: String
+  }
+
 type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
@@ -148,6 +159,8 @@ foreign import bootstrapVectors :: Array BootstrapVector
 foreign import familyRestoreVectors :: Array FamilyRestoreVector
 
 foreign import shelleyRestoreVectors :: Array ShelleyRestoreVector
+
+foreign import signingVectors :: Array SigningVector
 
 foreign import scriptHashVectors :: Array ScriptHashVector
 

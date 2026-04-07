@@ -39,7 +39,9 @@ import Cardano.Address.Derivation (
     XPrv,
     XPub,
     indexFromWord32,
+    sign,
     toXPub,
+    verify,
     xprvToBytes,
     xpubToBytes,
  )
@@ -104,6 +106,7 @@ import Data.String (
 import Data.Text (
     Text,
  )
+import Data.Text qualified as Text
 import GHC.Generics (
     Generic,
  )
@@ -116,8 +119,11 @@ import Cardano.Codec.Cbor qualified as CBOR
 import Codec.Binary.Bech32 qualified as Bech32
 import Codec.Binary.Encoding qualified as Encoding
 import Codec.CBOR.Decoding qualified as CBORDec
+import Data.Bits (shiftL)
+import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
+import Data.Char (isDigit)
 import Data.Map.Strict qualified as Map
 import Data.Text.Encoding qualified as Text
 import Data.Word (Word32, Word8)
@@ -130,6 +136,7 @@ data Vectors = Vectors
     , bootstrapVectors :: [BootstrapVector]
     , familyRestoreVectors :: [FamilyRestoreVector]
     , shelleyRestoreVectors :: [ShelleyRestoreVector]
+    , signingVectors :: [SigningVector]
     }
     deriving (Eq, Generic, Show)
 
@@ -290,6 +297,18 @@ data ShelleyRestoreVector = ShelleyRestoreVector
 
 instance ToJSON ShelleyRestoreVector
 
+data SigningVector = SigningVector
+    { label :: Text
+    , payloadMode :: Text
+    , payloadInput :: Text
+    , signingKeyBech32 :: Text
+    , verificationKeyBech32 :: Text
+    , signatureHex :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON SigningVector
+
 main :: IO ()
 main = BL.putStr (encode vectors)
 
@@ -310,6 +329,8 @@ vectors =
             concatMap familyRestoreVectorsForMnemonic mnemonics
         , shelleyRestoreVectors =
             concatMap shelleyRestoreVectorsForMnemonic mnemonics
+        , signingVectors =
+            concatMap signingVectorsForMnemonic mnemonics
         }
 
 mnemonics :: [[Text]]
@@ -839,6 +860,43 @@ shelleyRestoreVectorsForMnemonic mnemonicWords =
             rewardCustom1
         ]
 
+signingVectorsForMnemonic :: [Text] -> [SigningVector]
+signingVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        root = rootKeyFromMnemonic mnemonicWords
+        account0 = accountKey root 0
+        external0 = addressKey account0 UTxOExternal 0
+        stake0 = delegationKey account0
+     in [ mkSigningVector
+            (stem <> "-sign-root-text")
+            "text"
+            "cardano-addresses-browser signing test"
+            CIP5.root_xsk
+            CIP5.root_xvk
+            root
+        , mkSigningVector
+            (stem <> "-sign-account-text")
+            "text"
+            "account scoped signing"
+            CIP5.acct_xsk
+            CIP5.acct_xvk
+            account0
+        , mkSigningVector
+            (stem <> "-sign-address-hex")
+            "hex"
+            "deadbeef00ff11"
+            CIP5.addr_xsk
+            CIP5.addr_xvk
+            external0
+        , mkSigningVector
+            (stem <> "-sign-stake-text")
+            "text"
+            "stake credential proof"
+            CIP5.stake_xsk
+            CIP5.stake_xvk
+            stake0
+        ]
+
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector
 mkDerivationVector mnemonicWords accountIx roleName addressIx =
     let root = rootKeyFromMnemonic mnemonicWords
@@ -890,6 +948,32 @@ mkShelleyRestoreVector label mnemonicWords network networkTag accountIndex role 
         , delegationAddressBech32 = bech32 <$> delegationAddress
         , rewardAddressBech32 = bech32 rewardAddress
         }
+
+mkSigningVector ::
+    Text ->
+    Text ->
+    Text ->
+    Bech32.HumanReadablePart ->
+    Bech32.HumanReadablePart ->
+    Shelley depth XPrv ->
+    SigningVector
+mkSigningVector label payloadMode payloadInput signingHrp verificationHrp signingKey =
+    let payloadBytes = payloadBytesFor payloadMode payloadInput
+        signature = sign (getKey signingKey) payloadBytes
+        verificationKey = toXPub <$> signingKey
+        isValid = verify (getKey verificationKey) payloadBytes signature
+     in if not isValid
+            then
+                error ("Unexpected signing vector verification failure: " <> show label)
+            else
+                SigningVector
+                    { label
+                    , payloadMode
+                    , payloadInput
+                    , signingKeyBech32 = bech32With signingHrp (xprvAddress signingKey)
+                    , verificationKeyBech32 = bech32With verificationHrp (xpubAddress verificationKey)
+                    , signatureHex = hexText (BA.convert signature)
+                    }
 
 expectedKeys ::
     Shelley depth XPrv ->
@@ -1421,6 +1505,30 @@ networkTagLabelFor value =
 
 networkTagToInt :: NetworkTag -> Int
 networkTagToInt (NetworkTag tag) = fromIntegral tag
+
+payloadBytesFor :: Text -> Text -> BS.ByteString
+payloadBytesFor payloadMode payloadInput =
+    case payloadMode of
+        "text" -> Text.encodeUtf8 payloadInput
+        "hex" -> decodeHexText payloadInput
+        other -> error ("Unsupported signing payload mode: " <> show other)
+
+decodeHexText :: Text -> BS.ByteString
+decodeHexText value
+    | odd (Text.length value) = error "Hex payload fixtures must have an even number of characters."
+    | otherwise = BS.pack (go (Text.unpack value))
+  where
+    go [] = []
+    go (hi : lo : rest) =
+        let byte = fromIntegral ((hexNibble hi `shiftL` 4) + hexNibble lo)
+         in byte : go rest
+    go _ = error "Unexpected odd-length hex payload."
+
+    hexNibble ch
+        | isDigit ch = fromEnum ch - fromEnum '0'
+        | 'a' <= ch && ch <= 'f' = 10 + fromEnum ch - fromEnum 'a'
+        | 'A' <= ch && ch <= 'F' = 10 + fromEnum ch - fromEnum 'A'
+        | otherwise = error ("Invalid hex character in signing fixture: " <> [ch])
 
 hexText :: BS.ByteString -> Text
 hexText =

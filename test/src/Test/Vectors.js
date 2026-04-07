@@ -37,6 +37,8 @@ export const shelleyRestoreVectors = fixture.shelleyRestoreVectors.map((vector) 
   delegationAddressBech32: toMaybe(vector.delegationAddressBech32),
 }));
 
+export const signingVectors = fixture.signingVectors;
+
 export const scriptHashVectors = fixture.scriptHashVectors;
 
 export const scriptTemplateVectors = fixture.scriptTemplateVectors;

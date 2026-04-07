@@ -7,6 +7,7 @@ import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
 import Cardano.Address.Shelley as Shelley
+import Cardano.Address.Signing as Signing
 import Cardano.Address.Script as Script
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
@@ -32,6 +33,7 @@ data Page
   | Mnemonic
   | Derivation
   | Legacy
+  | Signing
   | Scripts
   | Library
 
@@ -62,6 +64,7 @@ data Action
   | ToggleStatePanel
   | ToggleRestorePhraseVisibility
   | ToggleDerivedKeysVisibility
+  | ToggleSigningKeyVisibility
   | SetDerivationInput String
   | UseGeneratedMnemonic
   | SetRestoreFamily RestoreFamily
@@ -79,6 +82,14 @@ data Action
   | SetLegacyRootXPubInput String
   | SetLegacyDerivationPathInput String
   | SetLegacyCustomMagicInput String
+  | SetSigningPayloadMode Signing.PayloadMode
+  | SetSigningPayloadInput String
+  | SetSigningKeyInput String
+  | UseSigningResultForVerification
+  | SetVerifyPayloadMode Signing.PayloadMode
+  | SetVerifyPayloadInput String
+  | SetVerificationKeyInput String
+  | SetSignatureInput String
   | SetScriptInputMode ScriptInputMode
   | SetScriptInput String
 
@@ -91,6 +102,7 @@ type State =
   , showStatePanel :: Boolean
   , showRestorePhrase :: Boolean
   , showDerivedKeys :: Boolean
+  , showSigningKey :: Boolean
   , derivationInput :: String
   , restoreFamily :: RestoreFamily
   , shelleyNetwork :: Shelley.ShelleyNetwork
@@ -109,6 +121,15 @@ type State =
   , legacyDerivationPathInput :: String
   , legacyCustomMagicInput :: String
   , legacyResult :: Maybe (Either String String)
+  , signingPayloadMode :: Signing.PayloadMode
+  , signingPayloadInput :: String
+  , signingKeyInput :: String
+  , signingResult :: Maybe (Either String Signing.SignResult)
+  , verifyPayloadMode :: Signing.PayloadMode
+  , verifyPayloadInput :: String
+  , verificationKeyInput :: String
+  , signatureInput :: String
+  , verificationResult :: Maybe (Either String Boolean)
   , scriptInputMode :: ScriptInputMode
   , scriptInput :: String
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
@@ -125,6 +146,7 @@ initialState =
   , showStatePanel: false
   , showRestorePhrase: false
   , showDerivedKeys: false
+  , showSigningKey: false
   , derivationInput: ""
   , restoreFamily: RestoreShelley
   , shelleyNetwork: Shelley.ShelleyMainnet
@@ -143,6 +165,15 @@ initialState =
   , legacyDerivationPathInput: "0H/0"
   , legacyCustomMagicInput: "4242"
   , legacyResult: Nothing
+  , signingPayloadMode: Signing.PayloadText
+  , signingPayloadInput: ""
+  , signingKeyInput: ""
+  , signingResult: Nothing
+  , verifyPayloadMode: Signing.PayloadText
+  , verifyPayloadInput: ""
+  , verificationKeyInput: ""
+  , signatureInput: ""
+  , verificationResult: Nothing
   , scriptInputMode: ScriptInputCbor
   , scriptInput: ""
   , scriptAnalysisResult: Nothing
@@ -203,6 +234,8 @@ handleAction = case _ of
     H.modify_ \state -> state { showRestorePhrase = not state.showRestorePhrase }
   ToggleDerivedKeysVisibility ->
     H.modify_ \state -> state { showDerivedKeys = not state.showDerivedKeys }
+  ToggleSigningKeyVisibility ->
+    H.modify_ \state -> state { showSigningKey = not state.showSigningKey }
   SetShelleyNetwork network ->
     H.modify_ _ { shelleyNetwork = network }
       *> refreshDerivation
@@ -291,6 +324,40 @@ handleAction = case _ of
     H.modify_ _ { legacyCustomMagicInput = value, legacyNetwork = nextNetwork }
       *> refreshDerivation
       *> refreshLegacyConstruction
+  SetSigningPayloadMode mode ->
+    H.modify_ _ { signingPayloadMode = mode }
+      *> refreshSigning
+  SetSigningPayloadInput value ->
+    H.modify_ _ { signingPayloadInput = value }
+      *> refreshSigning
+  SetSigningKeyInput value ->
+    H.modify_ _ { signingKeyInput = value }
+      *> refreshSigning
+  UseSigningResultForVerification -> do
+    state <- H.get
+    case state.signingResult of
+      Just (Right result) ->
+        H.modify_ _
+          { verifyPayloadMode = state.signingPayloadMode
+          , verifyPayloadInput = state.signingPayloadInput
+          , verificationKeyInput = result.verificationKeyBech32
+          , signatureInput = result.signatureHex
+          }
+          *> refreshVerification
+      _ ->
+        pure unit
+  SetVerifyPayloadMode mode ->
+    H.modify_ _ { verifyPayloadMode = mode }
+      *> refreshVerification
+  SetVerifyPayloadInput value ->
+    H.modify_ _ { verifyPayloadInput = value }
+      *> refreshVerification
+  SetVerificationKeyInput value ->
+    H.modify_ _ { verificationKeyInput = value }
+      *> refreshVerification
+  SetSignatureInput value ->
+    H.modify_ _ { signatureInput = value }
+      *> refreshVerification
   SetScriptInputMode mode -> do
     state <- H.get
     H.modify_ _
@@ -430,6 +497,32 @@ refreshLegacyConstruction = do
           Right value -> value
       }
 
+refreshSigning :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
+refreshSigning = do
+  state <- H.get
+  if signingInputIsBlank state.signingPayloadMode state.signingPayloadInput || String.trim state.signingKeyInput == "" then
+    H.modify_ _ { signingResult = Nothing }
+  else
+    H.modify_ _
+      { signingResult = Just (Signing.signPayload state.signingPayloadMode state.signingPayloadInput state.signingKeyInput) }
+
+refreshVerification :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
+refreshVerification = do
+  state <- H.get
+  if signingInputIsBlank state.verifyPayloadMode state.verifyPayloadInput || String.trim state.verificationKeyInput == "" || String.trim state.signatureInput == "" then
+    H.modify_ _ { verificationResult = Nothing }
+  else
+    H.modify_ _
+      { verificationResult =
+          Just
+            ( Signing.verifySignature
+                state.verifyPayloadMode
+                state.verifyPayloadInput
+                state.verificationKeyInput
+                state.signatureInput
+            )
+      }
+
 scriptAnalysisStatus :: ScriptInputMode -> String -> Maybe (Either String Script.ScriptAnalysis)
 scriptAnalysisStatus mode value =
   let
@@ -529,6 +622,7 @@ renderActivePage state = case state.activePage of
   Mnemonic -> renderDerivationPage state
   Derivation -> renderDerivationPage state
   Legacy -> renderLegacyPage state
+  Signing -> renderSigningPage state
   Scripts -> renderScriptsPage state
   Library -> renderLibraryPage
 
@@ -870,6 +964,94 @@ renderDerivationInput state =
           ]
       ]
 
+renderSigningPage :: forall w. State -> HH.HTML w Action
+renderSigningPage state =
+  HH.div
+    [ HP.class_ (HH.ClassName "page-grid") ]
+    [ sectionCard
+        "Sign payload"
+        [ HH.p_
+            [ HH.text "Sign arbitrary text or hex payloads with an extended signing key. This tool signs raw bytes only; it does not build or sign Cardano transactions." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ renderSigningModeButton state.signingPayloadMode Signing.PayloadText
+            , renderSigningModeButton state.signingPayloadMode Signing.PayloadHex
+            ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input script-input")
+            , HP.rows 5
+            , HP.placeholder (signingPayloadPlaceholder state.signingPayloadMode)
+            , HP.value state.signingPayloadInput
+            , HE.onValueInput SetSigningPayloadInput
+            ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> ToggleSigningKeyVisibility
+                ]
+                [ HH.text (if state.showSigningKey then "Hide signing key" else "Show signing key") ]
+            ]
+        , if state.showSigningKey then
+            HH.textarea
+              [ HP.class_ (HH.ClassName "text-input inspector-input")
+              , HP.rows 4
+              , HP.placeholder "addr_xsk1... or stake_xsk1..."
+              , HP.value state.signingKeyInput
+              , HE.onValueInput SetSigningKeyInput
+              ]
+          else
+            HH.input
+              [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
+              , HP.type_ HP.InputPassword
+              , HP.placeholder "addr_xsk1... or stake_xsk1..."
+              , HP.value state.signingKeyInput
+              , HE.onValueInput SetSigningKeyInput
+              ]
+        , keyValue "Accepted signing keys" "root_xsk, acct_xsk, addr_xsk, stake_xsk"
+        ]
+    , sectionCard
+        "Signature"
+        [ renderSigningResult state.signingResult ]
+    , sectionCard
+        "Verify signature"
+        [ HH.p_
+            [ HH.text "Verify a 64-byte Ed25519 signature against an extended verification key using the same payload bytes." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ renderVerifyModeButton state.verifyPayloadMode Signing.PayloadText
+            , renderVerifyModeButton state.verifyPayloadMode Signing.PayloadHex
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> UseSigningResultForVerification
+                ]
+                [ HH.text "Use signed payload" ]
+            ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input script-input")
+            , HP.rows 5
+            , HP.placeholder (signingPayloadPlaceholder state.verifyPayloadMode)
+            , HP.value state.verifyPayloadInput
+            , HE.onValueInput SetVerifyPayloadInput
+            ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input inspector-input")
+            , HP.rows 3
+            , HP.placeholder "addr_xvk1... or stake_xvk1..."
+            , HP.value state.verificationKeyInput
+            , HE.onValueInput SetVerificationKeyInput
+            ]
+        , HH.textarea
+            [ HP.class_ (HH.ClassName "text-input inspector-input")
+            , HP.rows 3
+            , HP.placeholder "64-byte signature as hex"
+            , HP.value state.signatureInput
+            , HE.onValueInput SetSignatureInput
+            ]
+        , renderVerificationResult state.verificationResult
+        ]
+    ]
+
 renderScriptsPage :: forall w. State -> HH.HTML w Action
 renderScriptsPage state =
   HH.div
@@ -938,6 +1120,8 @@ renderStatePanel state =
           , keyValue "Restore path" (restorePathSummary state)
           , keyValue "Derivation result" (derivationStatus state.derivationResult)
           , keyValue "Family restore result" (familyRestoreStatus state.familyRestoreResult)
+          , keyValue "Signing result" (signingStatus state.signingResult)
+          , keyValue "Verification result" (verificationStatus state.verificationResult)
           ]
       ]
   else
@@ -1126,6 +1310,24 @@ renderLegacyCustomNetworkButton activeNetwork =
     ]
     [ HH.text "Custom" ]
 
+renderSigningModeButton :: forall w. Signing.PayloadMode -> Signing.PayloadMode -> HH.HTML w Action
+renderSigningModeButton activeMode mode =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeMode == mode then " active" else ""))
+    , HE.onClick \_ -> SetSigningPayloadMode mode
+    ]
+    [ HH.text (Signing.payloadModeLabel mode) ]
+
+renderVerifyModeButton :: forall w. Signing.PayloadMode -> Signing.PayloadMode -> HH.HTML w Action
+renderVerifyModeButton activeMode mode =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeMode == mode then " active" else ""))
+    , HE.onClick \_ -> SetVerifyPayloadMode mode
+    ]
+    [ HH.text (Signing.payloadModeLabel mode) ]
+
 renderScriptModeButton :: forall w. ScriptInputMode -> ScriptInputMode -> String -> HH.HTML w Action
 renderScriptModeButton activeMode mode label =
   HH.button
@@ -1280,6 +1482,19 @@ familyRestoreStatus = case _ of
   Just (Left _) -> "error"
   Just (Right _) -> "derived"
 
+signingStatus :: Maybe (Either String Signing.SignResult) -> String
+signingStatus = case _ of
+  Nothing -> "idle"
+  Just (Left _) -> "error"
+  Just (Right _) -> "signed"
+
+verificationStatus :: Maybe (Either String Boolean) -> String
+verificationStatus = case _ of
+  Nothing -> "idle"
+  Just (Left _) -> "error"
+  Just (Right true) -> "valid"
+  Just (Right false) -> "invalid"
+
 mnemonicStatus :: Boolean -> String -> String
 mnemonicStatus isVisible derivationInput =
   let
@@ -1315,6 +1530,11 @@ scriptInputPlaceholder = case _ of
   ScriptInputCbor -> "8200581c..."
   ScriptInputJson -> "{\"all\":[\"addr_vkh1...\",{\"active_from\":120}]}"
   ScriptInputTemplate -> "{\"cosigners\":{\"cosigner#0\":\"<xpub-hex>\"},\"template\":\"cosigner#0\"}"
+
+signingPayloadPlaceholder :: Signing.PayloadMode -> String
+signingPayloadPlaceholder = case _ of
+  Signing.PayloadText -> "hello cardano"
+  Signing.PayloadHex -> "deadbeef00ff11"
 
 scriptOutputLabel :: ScriptInputMode -> String
 scriptOutputLabel = case _ of
@@ -1401,6 +1621,11 @@ rolePathSegment = case _ of
 
 normalizeIndexInput :: String -> String
 normalizeIndexInput value = show (parseIndexInput value)
+
+signingInputIsBlank :: Signing.PayloadMode -> String -> Boolean
+signingInputIsBlank payloadMode value = case payloadMode of
+  Signing.PayloadText -> String.trim value == ""
+  Signing.PayloadHex -> normalizeHexInput value == ""
 
 renderDerivationResult
   :: forall w
@@ -1631,6 +1856,55 @@ renderFamilyRestoreResult = case _ of
           ]
       ]
 
+renderSigningResult :: forall w. Maybe (Either String Signing.SignResult) -> HH.HTML w Action
+renderSigningResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Paste a supported xsk key and a payload to derive a signature." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right result) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      [ addressCard "Verification key" result.verificationKeyBech32
+      , addressCard "Signature (hex)" result.signatureHex
+      , addressCard "Payload bytes (hex)" result.payloadHex
+      ]
+
+renderVerificationResult :: forall w. Maybe (Either String Boolean) -> HH.HTML w Action
+renderVerificationResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Provide a payload, xvk, and signature to verify them locally in the browser." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right true) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "output-card") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "output-meta") ]
+          [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text "Verification" ] ]
+      , HH.div [ HP.class_ (HH.ClassName "output-value") ] [ HH.text "Valid signature" ]
+      ]
+  Just (Right false) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "output-card") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "output-meta") ]
+          [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text "Verification" ] ]
+      , HH.div [ HP.class_ (HH.ClassName "output-value") ] [ HH.text "Invalid signature" ]
+      ]
+
 renderScriptAnalysisResult :: forall w. Maybe (Either String Script.ScriptAnalysis) -> HH.HTML w Action
 renderScriptAnalysisResult = case _ of
   Nothing ->
@@ -1744,6 +2018,7 @@ navItems =
   , { page: Inspect, label: "Inspect", note: "Decode addresses" }
   , { page: Derivation, label: "Restore", note: "Choose family first" }
   , { page: Legacy, label: "Expert", note: "Manual bootstrap xpubs" }
+  , { page: Signing, label: "Signing", note: "Sign and verify" }
   , { page: Scripts, label: "Scripts", note: "Hash native scripts" }
   , { page: Library, label: "Library", note: "Reusable exports" }
   ]
@@ -1755,5 +2030,6 @@ pageTitle = case _ of
   Mnemonic -> "Restore And Build"
   Derivation -> "Restore And Build"
   Legacy -> "Manual Bootstrap Construction"
+  Signing -> "Signing Tools"
   Scripts -> "Native Scripts"
   Library -> "Library Surface"
