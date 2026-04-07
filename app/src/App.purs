@@ -2,6 +2,8 @@ module App where
 
 import Prelude
 
+import Cardano.Address (base58)
+import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
 import Cardano.Address.ScriptHash as ScriptHash
@@ -27,6 +29,7 @@ data Page
   | Inspect
   | Mnemonic
   | Derivation
+  | Legacy
   | Scripts
   | Library
 
@@ -54,6 +57,11 @@ data Action
   | SetAddressIndexInput String
   | SetDerivationRole Derivation.Role
   | RunDerivation
+  | SetLegacyStyle Bootstrap.LegacyStyle
+  | SetLegacyNetwork Bootstrap.LegacyNetwork
+  | SetLegacyAddressXPubInput String
+  | SetLegacyRootXPubInput String
+  | SetLegacyDerivationPathInput String
   | SetScriptInput String
 
 type State =
@@ -70,6 +78,12 @@ type State =
   , derivationRole :: Derivation.Role
   , previousDerivedKeys :: Maybe Derivation.DerivedKeys
   , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
+  , legacyStyle :: Bootstrap.LegacyStyle
+  , legacyNetwork :: Bootstrap.LegacyNetwork
+  , legacyAddressXPubInput :: String
+  , legacyRootXPubInput :: String
+  , legacyDerivationPathInput :: String
+  , legacyResult :: Maybe (Either String String)
   , scriptInput :: String
   , scriptHashResult :: Maybe (Either String ScriptHash.ScriptHashResult)
   }
@@ -89,6 +103,12 @@ initialState =
   , derivationRole: Derivation.UTxOExternal
   , previousDerivedKeys: Nothing
   , derivationResult: Nothing
+  , legacyStyle: Bootstrap.LegacyIcarus
+  , legacyNetwork: Bootstrap.LegacyMainnet
+  , legacyAddressXPubInput: ""
+  , legacyRootXPubInput: ""
+  , legacyDerivationPathInput: "0H/0"
+  , legacyResult: Nothing
   , scriptInput: ""
   , scriptHashResult: Nothing
   }
@@ -166,6 +186,21 @@ handleAction = case _ of
       *> refreshDerivation
   RunDerivation ->
     refreshDerivation
+  SetLegacyStyle style ->
+    H.modify_ _ { legacyStyle = style }
+      *> refreshLegacyConstruction
+  SetLegacyNetwork network ->
+    H.modify_ _ { legacyNetwork = network }
+      *> refreshLegacyConstruction
+  SetLegacyAddressXPubInput value ->
+    H.modify_ _ { legacyAddressXPubInput = value }
+      *> refreshLegacyConstruction
+  SetLegacyRootXPubInput value ->
+    H.modify_ _ { legacyRootXPubInput = value }
+      *> refreshLegacyConstruction
+  SetLegacyDerivationPathInput value ->
+    H.modify_ _ { legacyDerivationPathInput = value }
+      *> refreshLegacyConstruction
   SetScriptInput value ->
     H.modify_ _ { scriptInput = value, scriptHashResult = scriptHashStatus value }
 
@@ -193,6 +228,42 @@ latestSuccessfulDerivation :: State -> Maybe Derivation.DerivedKeys
 latestSuccessfulDerivation state = case state.derivationResult of
   Just (Right keys) -> Just keys
   _ -> state.previousDerivedKeys
+
+refreshLegacyConstruction :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
+refreshLegacyConstruction = do
+  state <- H.get
+  if String.trim state.legacyAddressXPubInput == "" then
+    H.modify_ _ { legacyResult = Nothing }
+  else do
+    let
+      result = case Bootstrap.parseBootstrapXPub state.legacyAddressXPubInput of
+        Left err ->
+          pure (Left err)
+        Right addressXPub -> case state.legacyStyle of
+          Bootstrap.LegacyIcarus ->
+            pure (Right (base58 (Bootstrap.constructIcarusAddress state.legacyNetwork addressXPub)))
+          Bootstrap.LegacyByron ->
+            if String.trim state.legacyRootXPubInput == "" then
+              pure (Left "Paste the root_xvk key for Byron bootstrap addresses.")
+            else case Bootstrap.parseBootstrapXPub state.legacyRootXPubInput of
+              Left err ->
+                pure (Left err)
+              Right rootXPub ->
+                if String.trim state.legacyDerivationPathInput == "" then
+                  pure (Left "Enter a 2-segment Byron path like 0H/0.")
+                else do
+                  address <- Bootstrap.constructByronAddress
+                    state.legacyNetwork
+                    addressXPub
+                    rootXPub
+                    state.legacyDerivationPathInput
+                  pure (Right (base58 address))
+    actual <- liftAff (try result)
+    H.modify_ _
+      { legacyResult = Just case actual of
+          Left err -> Left ("Legacy construction failed: " <> message err)
+          Right value -> value
+      }
 
 scriptHashStatus :: String -> Maybe (Either String ScriptHash.ScriptHashResult)
 scriptHashStatus value =
@@ -280,6 +351,7 @@ renderActivePage state = case state.activePage of
   Inspect -> renderInspectPage state
   Mnemonic -> renderMnemonicPage state
   Derivation -> renderDerivationPage state
+  Legacy -> renderLegacyPage state
   Scripts -> renderScriptsPage state
   Library -> renderLibraryPage
 
@@ -418,6 +490,66 @@ renderDerivationPage state =
     , sectionCard
         "Derived keys"
         [ renderDerivationResult state.privacyLevel state.previousDerivedKeys state.derivationResult ]
+    ]
+
+renderLegacyPage :: forall w. State -> HH.HTML w Action
+renderLegacyPage state =
+  HH.div
+    [ HP.class_ (HH.ClassName "page-grid") ]
+    [ sectionCard
+        "Legacy address construction"
+        [ HH.p_
+            [ HH.text "Construct bootstrap addresses from extended public keys using the same Byron and Icarus semantics as cardano-addresses." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            (map (renderLegacyStyleButton state.legacyStyle) legacyStyles)
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            (map (renderLegacyNetworkButton state.legacyNetwork) legacyNetworks)
+        , HH.label
+            [ HP.class_ (HH.ClassName "field-group") ]
+            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Address xpub" ]
+            , HH.textarea
+                [ HP.class_ (HH.ClassName "text-input inspector-input")
+                , HP.rows 4
+                , HP.placeholder "addr_xvk1..."
+                , HP.value state.legacyAddressXPubInput
+                , HE.onValueInput SetLegacyAddressXPubInput
+                ]
+            ]
+        , if state.legacyStyle == Bootstrap.LegacyByron then
+            HH.div
+              [ HP.class_ (HH.ClassName "legacy-extra-fields") ]
+              [ HH.label
+                  [ HP.class_ (HH.ClassName "field-group") ]
+                  [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Root xpub" ]
+                  , HH.textarea
+                      [ HP.class_ (HH.ClassName "text-input inspector-input")
+                      , HP.rows 4
+                      , HP.placeholder "root_xvk1..."
+                      , HP.value state.legacyRootXPubInput
+                      , HE.onValueInput SetLegacyRootXPubInput
+                      ]
+                  ]
+              , HH.label
+                  [ HP.class_ (HH.ClassName "field-group") ]
+                  [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Byron path" ]
+                  , HH.input
+                      [ HP.class_ (HH.ClassName "inline-input")
+                      , HP.placeholder "0H/0"
+                      , HP.value state.legacyDerivationPathInput
+                      , HE.onValueInput SetLegacyDerivationPathInput
+                      ]
+                  ]
+              ]
+          else
+            HH.text ""
+        , keyValue "Network" (Bootstrap.legacyNetworkLabel state.legacyNetwork)
+        , keyValue "Style" (legacyStyleLabel state.legacyStyle)
+        ]
+    , sectionCard
+        "Bootstrap address"
+        [ renderLegacyResult state.legacyResult ]
     ]
 
 renderDerivationInput :: forall w. State -> HH.HTML w Action
@@ -637,6 +769,24 @@ renderRoleButton activeRole role =
     ]
     [ HH.text (Derivation.roleLabel role) ]
 
+renderLegacyStyleButton :: forall w. Bootstrap.LegacyStyle -> Bootstrap.LegacyStyle -> HH.HTML w Action
+renderLegacyStyleButton activeStyle style =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeStyle == style then " active" else ""))
+    , HE.onClick \_ -> SetLegacyStyle style
+    ]
+    [ HH.text (legacyStyleLabel style) ]
+
+renderLegacyNetworkButton :: forall w. Bootstrap.LegacyNetwork -> Bootstrap.LegacyNetwork -> HH.HTML w Action
+renderLegacyNetworkButton activeNetwork network =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeNetwork == network then " active" else ""))
+    , HE.onClick \_ -> SetLegacyNetwork network
+    ]
+    [ HH.text (legacyNetworkShortLabel network) ]
+
 renderMnemonicResult :: forall w. PrivacyLevel -> Maybe (Array String) -> HH.HTML w Action
 renderMnemonicResult privacyLevel = case _ of
   Nothing ->
@@ -685,6 +835,18 @@ mnemonicWordCounts = [ 12, 15, 18, 21, 24 ]
 derivationRoles :: Array Derivation.Role
 derivationRoles = [ Derivation.UTxOExternal, Derivation.UTxOInternal, Derivation.Stake ]
 
+legacyStyles :: Array Bootstrap.LegacyStyle
+legacyStyles = [ Bootstrap.LegacyIcarus, Bootstrap.LegacyByron ]
+
+legacyNetworks :: Array Bootstrap.LegacyNetwork
+legacyNetworks =
+  [ Bootstrap.LegacyMainnet
+  , Bootstrap.LegacyStaging
+  , Bootstrap.LegacyTestnet
+  , Bootstrap.LegacyPreview
+  , Bootstrap.LegacyPreprod
+  ]
+
 inspectStatus :: Maybe (Either String Inspect.AddressInfo) -> String
 inspectStatus = case _ of
   Nothing -> "idle"
@@ -710,6 +872,20 @@ privacyLabel :: PrivacyLevel -> String
 privacyLabel = case _ of
   PrivacyStandard -> "visible"
   PrivacyHidden -> "private"
+
+legacyStyleLabel :: Bootstrap.LegacyStyle -> String
+legacyStyleLabel = case _ of
+  Bootstrap.LegacyIcarus -> "Icarus"
+  Bootstrap.LegacyByron -> "Byron"
+
+legacyNetworkShortLabel :: Bootstrap.LegacyNetwork -> String
+legacyNetworkShortLabel = case _ of
+  Bootstrap.LegacyMainnet -> "Mainnet"
+  Bootstrap.LegacyStaging -> "Staging"
+  Bootstrap.LegacyTestnet -> "Testnet"
+  Bootstrap.LegacyPreview -> "Preview"
+  Bootstrap.LegacyPreprod -> "Preprod"
+  Bootstrap.LegacyCustom magic -> "Custom " <> show magic
 
 derivationPathSummary :: State -> String
 derivationPathSummary state =
@@ -808,6 +984,43 @@ renderScriptHashResult = case _ of
       , keyValue "Hash bech32" result.hashBech32
       ]
 
+renderLegacyResult :: forall w. Maybe (Either String String) -> HH.HTML w Action
+renderLegacyResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Paste an addr_xvk to start. Byron additionally needs a root_xvk and a path like 0H/14." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right address) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "output-card") ]
+          [ HH.div
+              [ HP.class_ (HH.ClassName "output-meta") ]
+              [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text "Base58 bootstrap address" ]
+              , HH.div
+                  [ HP.class_ (HH.ClassName "output-actions") ]
+                  [ HH.button
+                      [ HP.class_ (HH.ClassName "secondary-btn")
+                      , HE.onClick \_ -> CopyValue address
+                      ]
+                      [ HH.text "Copy" ]
+                  ]
+              ]
+          , HH.div
+              [ HP.class_ (HH.ClassName "output-value")
+              , HP.title address
+              ]
+              [ HH.text address ]
+          ]
+      ]
+
 type NavItem =
   { page :: Page
   , label :: String
@@ -820,6 +1033,7 @@ navItems =
   , { page: Inspect, label: "Inspect", note: "Decode addresses" }
   , { page: Mnemonic, label: "Mnemonic", note: "Generate recovery phrases" }
   , { page: Derivation, label: "Derivation", note: "Follow CIP-1852" }
+  , { page: Legacy, label: "Legacy", note: "Build bootstrap addresses" }
   , { page: Scripts, label: "Scripts", note: "Hash native scripts" }
   , { page: Library, label: "Library", note: "Reusable exports" }
   ]
@@ -830,5 +1044,6 @@ pageTitle = case _ of
   Inspect -> "Address Inspection"
   Mnemonic -> "Mnemonic Generation"
   Derivation -> "Key Derivation"
+  Legacy -> "Legacy Construction"
   Scripts -> "Native Scripts"
   Library -> "Library Surface"

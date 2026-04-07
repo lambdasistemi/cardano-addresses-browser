@@ -20,4 +20,10 @@ export const inspectionVectors = fixture.inspectionVectors.map((vector) => ({
   },
 }));
 
+export const bootstrapVectors = fixture.bootstrapVectors.map((vector) => ({
+  ...vector,
+  rootXPubBech32: toMaybe(vector.rootXPubBech32),
+  derivationPath: toMaybe(vector.derivationPath),
+}));
+
 export const scriptHashVectors = fixture.scriptHashVectors;

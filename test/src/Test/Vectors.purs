@@ -1,5 +1,6 @@
 module Test.Vectors
-  ( DerivationVector
+  ( BootstrapVector
+  , DerivationVector
   , DetailRow
   , ExpectedAddressInfo
   , ExpectedKeys
@@ -8,6 +9,7 @@ module Test.Vectors
   , ScriptHashVector
   , derivationVectors
   , inspectionVectors
+  , bootstrapVectors
   , scriptHashVectors
   ) where
 
@@ -56,6 +58,17 @@ type InspectionVector =
   , expected :: ExpectedAddressInfo
   }
 
+type BootstrapVector =
+  { label :: String
+  , style :: String
+  , network :: String
+  , protocolMagic :: Int
+  , addressXPubBech32 :: String
+  , rootXPubBech32 :: Maybe String
+  , derivationPath :: Maybe String
+  , expectedAddressBase58 :: String
+  }
+
 type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
@@ -70,5 +83,7 @@ type ScriptHashVector =
 foreign import derivationVectors :: Array DerivationVector
 
 foreign import inspectionVectors :: Array InspectionVector
+
+foreign import bootstrapVectors :: Array BootstrapVector
 
 foreign import scriptHashVectors :: Array ScriptHashVector

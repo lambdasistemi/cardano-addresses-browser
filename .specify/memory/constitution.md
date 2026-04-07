@@ -17,6 +17,9 @@ Frontend built with PureScript and Halogen. JS crypto libraries accessed via FFI
 ### V. Correctness Over Features
 Every encoding/hashing function must produce output identical to the Haskell reference implementation. Test against known test vectors from the cardano-addresses test suite.
 
+### VI. Reference Semantics Over Implementation Loyalty
+Haskell `cardano-addresses` is the authority for behavior. Haskell-generated vectors define the compatibility contract. JavaScript dependencies such as `cardano-crypto.js` are implementation tools only: use them where they directly and faithfully map to upstream semantics, but do not force uniform use of a dependency across the whole codebase just for consistency. If a simpler implementation matches the Haskell vectors, prefer the simpler implementation.
+
 ## Technical Constraints
 
 - PureScript 0.15.x, Spago workspace format
