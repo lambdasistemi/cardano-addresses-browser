@@ -7,6 +7,7 @@ import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
 import Cardano.Address.Shelley as Shelley
+import Cardano.Address.Signing as Signing
 import Cardano.Address.Script (analyzeNativeScriptHex, analyzeNativeScriptJson, analyzeScriptTemplateJson)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
@@ -17,7 +18,7 @@ import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
-import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, ShelleyRestoreVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors, shelleyRestoreVectors)
+import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, ShelleyRestoreVector, SigningVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors, shelleyRestoreVectors, signingVectors)
 
 main :: Effect Unit
 main = launchAff_ do
@@ -26,6 +27,7 @@ main = launchAff_ do
   traverse_ assertBootstrapVector bootstrapVectors
   traverse_ assertFamilyRestoreVector familyRestoreVectors
   traverse_ assertShelleyRestoreVector shelleyRestoreVectors
+  liftEffect (traverse_ assertSigningVector signingVectors)
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
 
@@ -159,6 +161,34 @@ parseIcarusRole = case _ of
   Just "internal" -> Bootstrap.IcarusInternal
   Just other -> unsafeCrashWith ("Unsupported Icarus role: " <> other)
   Nothing -> unsafeCrashWith "Missing Icarus role"
+
+assertSigningVector :: SigningVector -> Effect Unit
+assertSigningVector vector = do
+  case Signing.signPayload
+    (parsePayloadMode vector.payloadMode)
+    vector.payloadInput
+    vector.signingKeyBech32 of
+    Right actual | actual.signatureHex == vector.signatureHex && actual.verificationKeyBech32 == vector.verificationKeyBech32 -> do
+      case Signing.verifySignature
+        (parsePayloadMode vector.payloadMode)
+        vector.payloadInput
+        vector.verificationKeyBech32
+        vector.signatureHex of
+        Right true -> pure unit
+        Right false ->
+          throw ("Signing verification returned false for " <> vector.label)
+        Left err ->
+          throw ("Signing verification failed for " <> vector.label <> ": " <> err)
+    Right _ ->
+      throw ("Signing vector mismatch: " <> vector.label)
+    Left err ->
+      throw ("Signing unexpectedly failed for " <> vector.label <> ": " <> err)
+
+parsePayloadMode :: String -> Signing.PayloadMode
+parsePayloadMode = case _ of
+  "text" -> Signing.PayloadText
+  "hex" -> Signing.PayloadHex
+  other -> unsafeCrashWith ("Unsupported signing payload mode: " <> other)
 
 assertScriptHashVector :: ScriptHashVector -> Effect Unit
 assertScriptHashVector vector = do
