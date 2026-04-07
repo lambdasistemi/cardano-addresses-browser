@@ -581,7 +581,7 @@ renderInspectResult = case _ of
     HH.div
       [ HP.class_ (HH.ClassName "empty-state") ]
       [ HH.p_
-          [ HH.text "No address inspected yet. Supported today: Shelley bech32 with detailed decoding, Byron base58 with fallback classification." ]
+          [ HH.text "No address inspected yet. Supported today: Shelley bech32 plus Byron and Icarus base58 inspection." ]
       ]
   Just (Left err) ->
     HH.div
@@ -590,17 +590,28 @@ renderInspectResult = case _ of
   Just (Right info) ->
     HH.div
       [ HP.class_ (HH.ClassName "result-grid") ]
-      [ keyValue "Style" info.addressStyle
-      , keyValue "Header type" info.addressTypeLabel
-      , keyValue "Header type code" (show info.addressType)
-      , keyValue "Network" info.networkTagLabel
-      , keyValue "Network tag" (show info.networkTag)
-      , keyValue "Stake reference" info.stakeReference
-      , maybeRow "Spending key hash" info.spendingKeyHash
-      , maybeRow "Spending script hash" info.spendingScriptHash
-      , maybeRow "Stake key hash" info.stakeKeyHash
-      , maybeRow "Stake script hash" info.stakeScriptHash
-      ]
+      ( [ keyValue "Style" info.addressStyle
+        , keyValue "Header type" info.addressTypeLabel
+        , keyValue "Header type code" (show info.addressType)
+        , keyValue "Network" info.networkTagLabel
+        , keyValue "Network tag" (networkTagValue info.networkTag)
+        , keyValue "Stake reference" info.stakeReference
+        , maybeRow "Spending key hash" info.spendingKeyHash
+        , maybeRow "Spending script hash" info.spendingScriptHash
+        , maybeRow "Stake key hash" info.stakeKeyHash
+        , maybeRow "Stake script hash" info.stakeScriptHash
+        ]
+          <> map renderDetailRow info.extraDetails
+      )
+
+renderDetailRow :: forall w. Inspect.DetailRow -> HH.HTML w Action
+renderDetailRow detail =
+  keyValue detail.label detail.value
+
+networkTagValue :: Int -> String
+networkTagValue tag
+  | tag < 0 = "-"
+networkTagValue tag = show tag
 
 maybeRow :: forall w. String -> Maybe String -> HH.HTML w Action
 maybeRow label value =

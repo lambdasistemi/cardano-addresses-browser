@@ -1,5 +1,6 @@
 module Test.Vectors
   ( DerivationVector
+  , DetailRow
   , ExpectedAddressInfo
   , ExpectedKeys
   , ExpectedScriptHash
@@ -11,6 +12,11 @@ module Test.Vectors
   ) where
 
 import Data.Maybe (Maybe)
+
+type DetailRow =
+  { label :: String
+  , value :: String
+  }
 
 type ExpectedKeys =
   { rootKeyBech32 :: String
@@ -41,6 +47,7 @@ type ExpectedAddressInfo =
   , stakeKeyHash :: Maybe String
   , spendingScriptHash :: Maybe String
   , stakeScriptHash :: Maybe String
+  , extraDetails :: Array DetailRow
   }
 
 type InspectionVector =

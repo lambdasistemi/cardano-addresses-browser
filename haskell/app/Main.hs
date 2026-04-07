@@ -25,13 +25,15 @@ import Cardano.Address (
     ChainPointer (..),
     NetworkDiscriminant,
     NetworkTag (..),
+    base58,
     bech32,
     bech32With,
+    unAddress,
     unsafeMkAddress,
  )
 import Cardano.Address.Derivation (
     Depth (AccountK, DelegationK, PaymentK, RootK),
-    DerivationType (Hardened, Soft),
+    DerivationType (Hardened, Soft, WholeDomain),
     Index,
     XPrv,
     XPub,
@@ -93,12 +95,17 @@ import GHC.Generics (
     Generic,
  )
 
+import Cardano.Address.Style.Byron qualified as Byron
+import Cardano.Address.Style.Icarus qualified as Icarus
 import Cardano.Codec.Bech32.Prefixes qualified as CIP5
+import Cardano.Codec.Cbor qualified as CBOR
 import Codec.Binary.Bech32 qualified as Bech32
 import Codec.Binary.Encoding qualified as Encoding
+import Codec.CBOR.Decoding qualified as CBORDec
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Text.Encoding qualified as Text
+import Data.Word (Word8)
 
 data Vectors = Vectors
     { derivationVectors :: [DerivationVector]
@@ -153,10 +160,19 @@ data ExpectedAddressInfo = ExpectedAddressInfo
     , stakeKeyHash :: Maybe Text
     , spendingScriptHash :: Maybe Text
     , stakeScriptHash :: Maybe Text
+    , extraDetails :: [DetailRow]
     }
     deriving (Eq, Generic, Show)
 
 instance ToJSON ExpectedAddressInfo
+
+data DetailRow = DetailRow
+    { label :: Text
+    , value :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON DetailRow
 
 data ScriptHashVector = ScriptHashVector
     { label :: Text
@@ -345,6 +361,38 @@ inspectionVectorsForMnemonic mnemonicWords =
         , mkInspectionVector (stem <> "-reward-testnet") rewardTestnet0
         , mkInspectionVector (stem <> "-reward-mainnet-account7") rewardMainnet7
         ]
+            <> legacyInspectionVectorsForMnemonic mnemonicWords
+
+legacyInspectionVectorsForMnemonic :: [Text] -> [InspectionVector]
+legacyInspectionVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        icarusRoot = icarusRootKeyFromMnemonic mnemonicWords
+        icarusAccount0 = icarusAccountKey icarusRoot 0
+        icarusExternal0 = icarusAddressKey icarusAccount0 Icarus.UTxOExternal 0
+        icarusInternal7 = icarusAddressKey icarusAccount0 Icarus.UTxOInternal 7
+        byronRoot = byronRootKeyFromMnemonic mnemonicWords
+        byronAccount0 = byronAccountKey byronRoot 0
+        byronAddress0 = byronAddressKey byronAccount0 0
+        byronAddress14 = byronAddressKey byronAccount0 14
+     in [ mkIcarusInspectionVector
+            (stem <> "-icarus-mainnet")
+            (Icarus.paymentAddress Icarus.icarusMainnet (toXPub <$> icarusExternal0))
+        , mkIcarusInspectionVector
+            (stem <> "-icarus-testnet")
+            (Icarus.paymentAddress Icarus.icarusTestnet (toXPub <$> icarusInternal7))
+        , mkIcarusInspectionVector
+            (stem <> "-icarus-preview")
+            (Icarus.paymentAddress Icarus.icarusPreview (toXPub <$> icarusExternal0))
+        , mkByronInspectionVector
+            (stem <> "-byron-mainnet")
+            (Byron.paymentAddress Byron.byronMainnet (toXPub <$> byronAddress0))
+        , mkByronInspectionVector
+            (stem <> "-byron-testnet")
+            (Byron.paymentAddress Byron.byronTestnet (toXPub <$> byronAddress14))
+        , mkByronInspectionVector
+            (stem <> "-byron-preprod")
+            (Byron.paymentAddress Byron.byronPreprod (toXPub <$> byronAddress0))
+        ]
 
 scriptHashVectorsForMnemonic :: [Text] -> [ScriptHashVector]
 scriptHashVectorsForMnemonic mnemonicWords =
@@ -421,6 +469,68 @@ mkInspectionVector label address =
         , expected = toExpectedAddressInfo (inspectShelleyAddress address)
         }
 
+mkIcarusInspectionVector :: Text -> Address -> InspectionVector
+mkIcarusInspectionVector label address =
+    let (addressRoot, _, networkTag) = inspectLegacyPayload address
+     in InspectionVector
+            { label
+            , address = base58 address
+            , expected =
+                ExpectedAddressInfo
+                    { addressStyle = "Icarus"
+                    , addressType = 8
+                    , addressTypeLabel = "Icarus address"
+                    , networkTag = legacyNetworkTagValue networkTag
+                    , networkTagLabel = legacyNetworkTagLabelFor (legacyNetworkTagValue networkTag)
+                    , stakeReference = "none"
+                    , spendingKeyHash = Nothing
+                    , stakeKeyHash = Nothing
+                    , spendingScriptHash = Nothing
+                    , stakeScriptHash = Nothing
+                    , extraDetails =
+                        [ DetailRow
+                            { label = "Address root"
+                            , value = hexText addressRoot
+                            }
+                        ]
+                    }
+            }
+
+mkByronInspectionVector :: Text -> Address -> InspectionVector
+mkByronInspectionVector label address =
+    let (addressRoot, attrs, networkTag) = inspectLegacyPayload address
+        encryptedPath =
+            case lookup 1 attrs of
+                Just payload -> hexText payload
+                Nothing -> error "Expected Byron derivation path attribute"
+     in InspectionVector
+            { label
+            , address = base58 address
+            , expected =
+                ExpectedAddressInfo
+                    { addressStyle = "Byron"
+                    , addressType = 8
+                    , addressTypeLabel = "Byron address"
+                    , networkTag = legacyNetworkTagValue networkTag
+                    , networkTagLabel = legacyNetworkTagLabelFor (legacyNetworkTagValue networkTag)
+                    , stakeReference = "none"
+                    , spendingKeyHash = Nothing
+                    , stakeKeyHash = Nothing
+                    , spendingScriptHash = Nothing
+                    , stakeScriptHash = Nothing
+                    , extraDetails =
+                        [ DetailRow
+                            { label = "Address root"
+                            , value = hexText addressRoot
+                            }
+                        , DetailRow
+                            { label = "Encrypted derivation path"
+                            , value = encryptedPath
+                            }
+                        ]
+                    }
+            }
+
 mkScriptHashVector :: Text -> Script KeyHash -> ScriptHashVector
 mkScriptHashVector label script =
     let serialized = serializeScript script
@@ -452,11 +562,20 @@ toExpectedAddressInfo AddressInfo{..} =
         , stakeKeyHash = fmap hexText infoStakeKeyHash
         , spendingScriptHash = fmap hexText infoSpendingScriptHash
         , stakeScriptHash = fmap hexText infoStakeScriptHash
+        , extraDetails = []
         }
 
 rootKeyFromMnemonic :: [Text] -> Shelley 'RootK XPrv
 rootKeyFromMnemonic mnemonicWords =
     genMasterKeyFromMnemonic (someMnemonic mnemonicWords) mempty
+
+icarusRootKeyFromMnemonic :: [Text] -> Icarus.Icarus 'RootK XPrv
+icarusRootKeyFromMnemonic mnemonicWords =
+    Icarus.genMasterKeyFromMnemonic (someMnemonic mnemonicWords) mempty
+
+byronRootKeyFromMnemonic :: [Text] -> Byron.Byron 'RootK XPrv
+byronRootKeyFromMnemonic mnemonicWords =
+    Byron.genMasterKeyFromMnemonic (someMnemonic mnemonicWords)
 
 accountKey :: Shelley 'RootK XPrv -> Int -> Shelley 'AccountK XPrv
 accountKey rootKey ix =
@@ -472,6 +591,29 @@ addressKey account role ix =
 
 delegationKey :: Shelley 'AccountK XPrv -> Shelley 'DelegationK XPrv
 delegationKey = deriveDelegationPrivateKey
+
+icarusAccountKey :: Icarus.Icarus 'RootK XPrv -> Int -> Icarus.Icarus 'AccountK XPrv
+icarusAccountKey rootKey ix =
+    Icarus.deriveAccountPrivateKey rootKey (hardenedAccountIndex ix)
+
+icarusAddressKey ::
+    Icarus.Icarus 'AccountK XPrv ->
+    Icarus.Role ->
+    Int ->
+    Icarus.Icarus 'PaymentK XPrv
+icarusAddressKey account role ix =
+    Icarus.deriveAddressPrivateKey account role (softPaymentIndex ix)
+
+byronAccountKey :: Byron.Byron 'RootK XPrv -> Int -> Byron.Byron 'AccountK XPrv
+byronAccountKey rootKey ix =
+    Byron.deriveAccountPrivateKey rootKey (wholeDomainAccountIndex ix)
+
+byronAddressKey ::
+    Byron.Byron 'AccountK XPrv ->
+    Int ->
+    Byron.Byron 'PaymentK XPrv
+byronAddressKey account ix =
+    Byron.deriveAddressPrivateKey account (wholeDomainPaymentIndex ix)
 
 inspectShelleyAddress :: Address -> AddressInfo
 inspectShelleyAddress address =
@@ -492,6 +634,16 @@ softPaymentIndex :: Int -> Index 'Soft 'PaymentK
 softPaymentIndex ix =
     fromMaybe (error "Invalid soft index") $
         indexFromWord32 @(Index 'Soft 'PaymentK) (fromIntegral ix)
+
+wholeDomainAccountIndex :: Int -> Index 'WholeDomain 'AccountK
+wholeDomainAccountIndex ix =
+    fromMaybe (error "Invalid whole-domain account index") $
+        indexFromWord32 @(Index 'WholeDomain 'AccountK) (0x80000000 + fromIntegral ix)
+
+wholeDomainPaymentIndex :: Int -> Index 'WholeDomain 'PaymentK
+wholeDomainPaymentIndex ix =
+    fromMaybe (error "Invalid whole-domain payment index") $
+        indexFromWord32 @(Index 'WholeDomain 'PaymentK) (fromIntegral ix)
 
 someMnemonic :: [Text] -> SomeMnemonic
 someMnemonic words' =
@@ -518,6 +670,41 @@ unsafeRight :: Either err a -> a
 unsafeRight = \case
     Right value -> value
     Left _ -> error "Unexpected Left"
+
+inspectLegacyPayload :: Address -> (BS.ByteString, [(Word8, BS.ByteString)], Maybe NetworkTag)
+inspectLegacyPayload address =
+    let payload =
+            unsafeRight $
+                CBOR.deserialiseCbor CBOR.decodeAddressPayload (unAddress address)
+        networkTag =
+            unsafeRight $
+                CBOR.deserialiseCbor CBOR.decodeProtocolMagicAttr payload
+        (addressRoot, attrs) =
+            unsafeRight $
+                CBOR.deserialiseCbor decodeLegacyPayload payload
+     in (addressRoot, attrs, fmap NetworkTag networkTag)
+  where
+    decodeLegacyPayload :: forall s. CBORDec.Decoder s (BS.ByteString, [(Word8, BS.ByteString)])
+    decodeLegacyPayload = do
+        _ <- CBORDec.decodeListLenCanonicalOf 3
+        addressRoot <- CBORDec.decodeBytes
+        attrs <- CBOR.decodeAllAttributes
+        _ <- CBORDec.decodeWord8
+        pure (addressRoot, attrs)
+
+legacyNetworkTagValue :: Maybe NetworkTag -> Int
+legacyNetworkTagValue = \case
+    Nothing -> -1
+    Just (NetworkTag value) -> fromIntegral value
+
+legacyNetworkTagLabelFor :: Int -> Text
+legacyNetworkTagLabelFor = \case
+    n | n < 0 -> "No network tag"
+    1 -> "Preprod"
+    2 -> "Preview"
+    633343913 -> "Legacy staging"
+    1097911063 -> "Legacy testnet"
+    other -> "Custom legacy network (" <> toText other <> ")"
 
 toText :: Int -> Text
 toText = fromString . show
