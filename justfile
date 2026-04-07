@@ -13,6 +13,10 @@ build:
 test:
   npx spago test -p cardano-addresses-test
 
+test-playwright: bundle
+  npm install --silent
+  npx playwright test --reporter=list
+
 haskell-format:
   cd haskell && fourmolu -i app/Main.hs
 
@@ -56,4 +60,4 @@ format:
 check:
   npx purs-tidy check "lib/src/**/*.purs" "app/src/**/*.purs"
 
-ci: check build haskell-quality check-vectors test
+ci: check build haskell-quality check-vectors test test-playwright
