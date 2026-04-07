@@ -14,7 +14,6 @@ test:
   npx spago test -p cardano-addresses-test
 
 test-playwright: bundle
-  npm install --silent
   npx playwright test --reporter=list
 
 haskell-format:

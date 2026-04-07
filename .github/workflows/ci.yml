@@ -21,26 +21,22 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Install dependencies
-        run: nix develop -c npm ci
+        run: nix run .#ci-install
 
       - name: Check formatting
-        run: nix develop -c just check
+        run: nix run .#ci-check
 
       - name: Build
-        run: nix develop -c just build
+        run: nix run .#ci-build
 
       - name: Haskell quality
-        run: nix develop -c just haskell-quality
+        run: nix run .#ci-haskell-quality
 
       - name: Check vectors
-        run: nix develop -c just check-vectors
+        run: nix run .#ci-check-vectors
 
       - name: Run tests
-        run: nix develop -c just test
+        run: nix run .#ci-test
 
       - name: Run Playwright UI tests
-        run: |
-          nix build .#playwright-browsers -o playwright-browsers
-          export PLAYWRIGHT_BROWSERS_PATH="$(readlink -f playwright-browsers)"
-          export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-          nix develop -c just test-playwright
+        run: nix run .#ci-playwright
