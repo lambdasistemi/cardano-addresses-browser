@@ -37,3 +37,9 @@ jobs:
 
       - name: Run tests
         run: nix develop -c just test
+
+      - name: Run Playwright UI tests
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$(nix eval --impure --raw --expr 'let flake = builtins.getFlake (toString ./.); pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; overlays = [ flake.inputs.haskellNix.overlay flake.inputs.purescript-overlay.overlays.default ]; }; in pkgs.playwright-driver.browsers')"
+          export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          nix develop -c just test-playwright
