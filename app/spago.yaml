@@ -2,6 +2,7 @@ package:
   name: cardano-addresses-browser
   dependencies:
     - aff
+    - aff-promise
     - arrays
     - cardano-addresses
     - console
