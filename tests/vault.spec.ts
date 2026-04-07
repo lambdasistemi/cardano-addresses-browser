@@ -30,12 +30,13 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   await page.getByRole("button", { name: /Mnemonic Generate and hand off/ }).click();
   await page.getByRole("button", { name: "12 words" }).click();
   await page.getByRole("button", { name: "Generate phrase" }).click();
+  await page.getByPlaceholder("12-word mnemonic").fill("Paper backup");
   await page.getByRole("button", { name: "Save to vault" }).click();
-  await expect(page.getByText("Saved 12-word mnemonic into the unlocked vault.")).toBeVisible();
+  await expect(page.getByText("Saved Paper backup into the unlocked vault.")).toBeVisible();
 
   await page.getByRole("button", { name: /Restore Choose family first/ }).click();
   const restoreCard = page.locator("section.card").filter({ has: page.getByText("Restore and build") });
-  await expect(restoreCard.locator(".vault-entry").getByText("12-word mnemonic", { exact: true })).toBeVisible();
+  await expect(restoreCard.locator(".vault-entry").getByText("Paper backup", { exact: true })).toBeVisible();
   await restoreCard.getByRole("button", { name: "Use in Restore" }).click();
   await expect(
     page.locator('[placeholder="abandon abandon ... or use the generated phrase"]'),
@@ -45,10 +46,12 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   const signCard = page.locator("section.card").filter({ has: page.getByText("Sign payload") });
   await signCard.getByRole("button", { name: "Show signing key" }).click();
   await signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...").fill(signingVector.signingKeyBech32);
+  await signCard.getByPlaceholder("Signing key").fill("Ops signer");
   await signCard.getByRole("button", { name: "Save signing key to vault" }).click();
-  await expect(page.getByText("Saved Signing key into the unlocked vault.")).toBeVisible();
+  await expect(page.getByText("Saved Ops signer into the unlocked vault.")).toBeVisible();
   await signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...").fill("");
-  await signCard.getByRole("button", { name: "Use in Signing" }).click();
+  await expect(signCard.locator(".vault-entry").getByText("Ops signer", { exact: true })).toBeVisible();
+  await signCard.locator(".vault-entry").filter({ has: page.getByText("Ops signer", { exact: true }) }).getByRole("button", { name: "Use in Signing" }).click();
   await expect(signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...")).toHaveValue(
     signingVector.signingKeyBech32,
   );
@@ -66,6 +69,7 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await page.getByRole("button", { name: /Mnemonic Generate and hand off/ }).click();
   await page.getByRole("button", { name: "12 words" }).click();
   await page.getByRole("button", { name: "Generate phrase" }).click();
+  await page.getByPlaceholder("12-word mnemonic").fill("Importable phrase");
   await page.getByRole("button", { name: "Save to vault" }).click();
 
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
@@ -87,5 +91,5 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
 
   await expect(page.locator(".kv-row").filter({ has: page.getByText("State") }).getByText("Unlocked")).toBeVisible();
   const entriesCard = page.locator("section.card").filter({ has: page.getByText("Unlocked entries") });
-  await expect(entriesCard.getByText("12-word mnemonic", { exact: true })).toBeVisible();
+  await expect(entriesCard.getByText("Importable phrase", { exact: true })).toBeVisible();
 });
