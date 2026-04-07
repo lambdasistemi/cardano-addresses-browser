@@ -45,18 +45,26 @@ import Cardano.Address.Derivation (
  )
 import Cardano.Address.KeyHash (
     KeyHash,
-    KeyRole (Payment, Policy),
+    KeyRole (Payment, PaymentShared, Policy),
  )
 import Cardano.Address.Script (
+    Cosigner (..),
     ErrRecommendedValidateScript (..),
     ErrValidateScript (..),
+    ErrValidateScriptTemplate (..),
     Script (..),
     ScriptHash (ScriptHash),
+    ScriptTemplate (..),
     ValidationLevel (RecommendedValidation, RequiredValidation),
+    cosignerToText,
+    cosigners,
+    prettyErrValidateScriptTemplate,
     scriptHashToText,
     serializeScript,
+    template,
     toScriptHash,
     validateScript,
+    validateScriptTemplate,
  )
 import Cardano.Address.Style.Shelley (
     AddressInfo (..),
@@ -102,6 +110,7 @@ import GHC.Generics (
 
 import Cardano.Address.Style.Byron qualified as Byron
 import Cardano.Address.Style.Icarus qualified as Icarus
+import Cardano.Address.Style.Shared qualified as Shared
 import Cardano.Codec.Bech32.Prefixes qualified as CIP5
 import Cardano.Codec.Cbor qualified as CBOR
 import Codec.Binary.Bech32 qualified as Bech32
@@ -109,6 +118,7 @@ import Codec.Binary.Encoding qualified as Encoding
 import Codec.CBOR.Decoding qualified as CBORDec
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
+import Data.Map.Strict qualified as Map
 import Data.Text.Encoding qualified as Text
 import Data.Word (Word32, Word8)
 
@@ -116,6 +126,7 @@ data Vectors = Vectors
     { derivationVectors :: [DerivationVector]
     , inspectionVectors :: [InspectionVector]
     , scriptHashVectors :: [ScriptHashVector]
+    , scriptTemplateVectors :: [ScriptTemplateVector]
     , bootstrapVectors :: [BootstrapVector]
     }
     deriving (Eq, Generic, Show)
@@ -212,6 +223,26 @@ data ValidationIssue = ValidationIssue
 
 instance ToJSON ValidationIssue
 
+data ScriptTemplateVector = ScriptTemplateVector
+    { label :: Text
+    , templateJson :: Text
+    , expected :: ExpectedScriptTemplate
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ScriptTemplateVector
+
+data ExpectedScriptTemplate = ExpectedScriptTemplate
+    { canonicalTemplateJson :: Text
+    , templateValidationStatus :: Text
+    , templateIssues :: [ValidationIssue]
+    , hasDerivedScript :: Bool
+    , derivedScript :: ExpectedScriptHash
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ExpectedScriptTemplate
+
 data BootstrapVector = BootstrapVector
     { label :: Text
     , style :: Text
@@ -238,6 +269,8 @@ vectors =
             concatMap inspectionVectorsForMnemonic mnemonics
         , scriptHashVectors =
             concatMap scriptHashVectorsForMnemonic mnemonics
+        , scriptTemplateVectors =
+            concatMap scriptTemplateVectorsForMnemonic mnemonics
         , bootstrapVectors =
             concatMap bootstrapVectorsForMnemonic mnemonics
         }
@@ -466,6 +499,42 @@ scriptHashVectorsForMnemonic mnemonicWords =
             (RequireAllOf [ActiveFromSlot 500, ActiveUntilSlot 42])
         ]
 
+scriptTemplateVectorsForMnemonic :: [Text] -> [ScriptTemplateVector]
+scriptTemplateVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        sharedRoot = sharedRootKeyFromMnemonic mnemonicWords
+        sharedAccount0 = sharedAccountKey sharedRoot 0
+        sharedPayment0 = Shared.deriveAddressPublicKey (toXPub <$> sharedAccount0) UTxOExternal (softPaymentIndex 0)
+        sharedPayment1 = Shared.deriveAddressPublicKey (toXPub <$> sharedAccount0) UTxOExternal (softPaymentIndex 1)
+        sharedPayment2 = Shared.deriveAddressPublicKey (toXPub <$> sharedAccount0) UTxOInternal (softPaymentIndex 0)
+        xpub0 = Shared.getKey sharedPayment0
+        xpub1 = Shared.getKey sharedPayment1
+        xpub2 = Shared.getKey sharedPayment2
+        c0 = Cosigner 0
+        c1 = Cosigner 1
+        c2 = Cosigner 2
+        validTemplate =
+            ScriptTemplate
+                (Map.fromList [(c0, xpub0), (c1, xpub1)])
+                (RequireAllOf [RequireSignatureOf c0, RequireAnyOf [RequireSignatureOf c1, ActiveFromSlot 120]])
+        someTemplate =
+            ScriptTemplate
+                (Map.fromList [(c0, xpub0), (c1, xpub1), (c2, xpub2)])
+                (RequireSomeOf 2 [RequireSignatureOf c0, RequireSignatureOf c1, RequireSignatureOf c2])
+        duplicateXpubTemplate =
+            ScriptTemplate
+                (Map.fromList [(c0, xpub0), (c1, xpub0)])
+                (RequireAllOf [RequireSignatureOf c0, RequireSignatureOf c1])
+        missingCosignerTemplate =
+            ScriptTemplate
+                (Map.fromList [(c0, xpub0)])
+                (RequireAllOf [RequireSignatureOf c0, RequireSignatureOf c1])
+     in [ mkScriptTemplateVector (stem <> "-template-valid") validTemplate
+        , mkScriptTemplateVector (stem <> "-template-some") someTemplate
+        , mkScriptTemplateVector (stem <> "-template-duplicate-xpub") duplicateXpubTemplate
+        , mkScriptTemplateVector (stem <> "-template-missing-cosigner") missingCosignerTemplate
+        ]
+
 bootstrapVectorsForMnemonic :: [Text] -> [BootstrapVector]
 bootstrapVectorsForMnemonic mnemonicWords =
     let stem = mnemonicStem mnemonicWords
@@ -678,6 +747,55 @@ mkScriptHashVector label script =
                     }
             }
 
+mkScriptTemplateVector :: Text -> ScriptTemplate -> ScriptTemplateVector
+mkScriptTemplateVector label scriptTemplate =
+    let issues = templateValidationIssues scriptTemplate
+        valid = null issues
+     in ScriptTemplateVector
+            { label
+            , templateJson = jsonText scriptTemplate
+            , expected =
+                ExpectedScriptTemplate
+                    { canonicalTemplateJson = jsonText scriptTemplate
+                    , templateValidationStatus =
+                        if valid then "valid" else "error"
+                    , templateIssues = issues
+                    , hasDerivedScript = valid
+                    , derivedScript =
+                        if valid
+                            then expectedScriptHashFromScript (deriveScriptFromTemplate scriptTemplate)
+                            else emptyExpectedScriptHash
+                    }
+            }
+
+expectedScriptHashFromScript :: Script KeyHash -> ExpectedScriptHash
+expectedScriptHashFromScript script =
+    let serialized = serializeScript script
+        scriptHash = toScriptHash script
+        issues = validationIssues script
+     in ExpectedScriptHash
+            { hashHex = scriptHashHex scriptHash
+            , hashBech32 = scriptHashToText scriptHash Policy Nothing
+            , canonicalCborHex = hexText serialized
+            , canonicalJson = jsonText script
+            , scriptType = scriptTypeLabel script
+            , validationStatus =
+                if null issues then "valid" else "warning"
+            , issues
+            }
+
+emptyExpectedScriptHash :: ExpectedScriptHash
+emptyExpectedScriptHash =
+    ExpectedScriptHash
+        { hashHex = ""
+        , hashBech32 = ""
+        , canonicalCborHex = ""
+        , canonicalJson = ""
+        , scriptType = ""
+        , validationStatus = "error"
+        , issues = []
+        }
+
 scriptTypeLabel :: Script elem -> Text
 scriptTypeLabel = \case
     RequireSignatureOf _ -> "Signature"
@@ -695,6 +813,47 @@ validationIssues script =
             case validateScript RecommendedValidation script of
                 Left err -> [validationIssue "recommended" err]
                 Right () -> []
+
+templateValidationIssues :: ScriptTemplate -> [ValidationIssue]
+templateValidationIssues scriptTemplate =
+    case validateScriptTemplate RequiredValidation scriptTemplate of
+        Left err -> [templateValidationIssue err]
+        Right () -> []
+
+templateValidationIssue :: ErrValidateScriptTemplate -> ValidationIssue
+templateValidationIssue err =
+    case err of
+        WrongScript scriptErr -> validationIssue "required" scriptErr
+        _ ->
+            ValidationIssue
+                { level = "required"
+                , code = templateValidationCode err
+                , message = fromString (prettyErrValidateScriptTemplate err)
+                }
+
+templateValidationCode :: ErrValidateScriptTemplate -> Text
+templateValidationCode = \case
+    WrongScript scriptErr -> validationCode scriptErr
+    DuplicateXPubs -> "duplicate-xpubs"
+    UnknownCosigner -> "unknown-cosigner"
+    MissingCosignerXPub -> "missing-cosigner-xpub"
+    NoCosignerInScript -> "no-cosigner-in-script"
+    NoCosignerXPub -> "no-cosigner-xpub"
+
+deriveScriptFromTemplate :: ScriptTemplate -> Script KeyHash
+deriveScriptFromTemplate scriptTemplate =
+    let lookupCosigner cosigner =
+            case Map.lookup cosigner (cosigners scriptTemplate) of
+                Just xpub -> Shared.hashKey PaymentShared (Shared.liftXPub xpub)
+                Nothing -> error "Missing cosigner while deriving template script"
+        go = \case
+            RequireSignatureOf cosigner -> RequireSignatureOf (lookupCosigner cosigner)
+            RequireAllOf scripts -> RequireAllOf (map go scripts)
+            RequireAnyOf scripts -> RequireAnyOf (map go scripts)
+            RequireSomeOf required scripts -> RequireSomeOf required (map go scripts)
+            ActiveFromSlot slot -> ActiveFromSlot slot
+            ActiveUntilSlot slot -> ActiveUntilSlot slot
+     in go (template scriptTemplate)
 
 validationIssue :: Text -> ErrValidateScript -> ValidationIssue
 validationIssue level err =
@@ -810,9 +969,17 @@ byronRootKeyFromMnemonic :: [Text] -> Byron.Byron 'RootK XPrv
 byronRootKeyFromMnemonic mnemonicWords =
     Byron.genMasterKeyFromMnemonic (someMnemonic mnemonicWords)
 
+sharedRootKeyFromMnemonic :: [Text] -> Shared.Shared 'RootK XPrv
+sharedRootKeyFromMnemonic mnemonicWords =
+    Shared.genMasterKeyFromMnemonic (someMnemonic mnemonicWords) mempty
+
 accountKey :: Shelley 'RootK XPrv -> Int -> Shelley 'AccountK XPrv
 accountKey rootKey ix =
     deriveAccountPrivateKey rootKey (hardenedAccountIndex ix)
+
+sharedAccountKey :: Shared.Shared 'RootK XPrv -> Int -> Shared.Shared 'AccountK XPrv
+sharedAccountKey rootKey ix =
+    Shared.deriveAccountPrivateKey rootKey (hardenedAccountIndex ix)
 
 addressKey ::
     Shelley 'AccountK XPrv ->

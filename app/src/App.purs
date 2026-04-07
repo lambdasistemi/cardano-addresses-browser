@@ -45,6 +45,7 @@ derive instance eqPrivacyLevel :: Eq PrivacyLevel
 data ScriptInputMode
   = ScriptInputCbor
   | ScriptInputJson
+  | ScriptInputTemplate
 
 derive instance eqScriptInputMode :: Eq ScriptInputMode
 
@@ -98,6 +99,7 @@ type State =
   , scriptInputMode :: ScriptInputMode
   , scriptInput :: String
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
+  , scriptTemplateAnalysisResult :: Maybe (Either String Script.ScriptTemplateAnalysis)
   }
 
 initialState :: State
@@ -125,6 +127,7 @@ initialState =
   , scriptInputMode: ScriptInputCbor
   , scriptInput: ""
   , scriptAnalysisResult: Nothing
+  , scriptTemplateAnalysisResult: Nothing
   }
 
 component :: forall query input output monad. MonadAff monad => H.Component query input output monad
@@ -240,12 +243,14 @@ handleAction = case _ of
     H.modify_ _
       { scriptInputMode = mode
       , scriptAnalysisResult = scriptAnalysisStatus mode state.scriptInput
+      , scriptTemplateAnalysisResult = scriptTemplateAnalysisStatus mode state.scriptInput
       }
   SetScriptInput value ->
     H.modify_ \state ->
       state
         { scriptInput = value
         , scriptAnalysisResult = scriptAnalysisStatus state.scriptInputMode value
+        , scriptTemplateAnalysisResult = scriptTemplateAnalysisStatus state.scriptInputMode value
         }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
@@ -331,6 +336,22 @@ scriptAnalysisStatus mode value =
           Nothing
         else
           Just (Script.analyzeNativeScriptJson trimmed)
+      ScriptInputTemplate ->
+        Nothing
+
+scriptTemplateAnalysisStatus :: ScriptInputMode -> String -> Maybe (Either String Script.ScriptTemplateAnalysis)
+scriptTemplateAnalysisStatus mode value =
+  let
+    trimmed = String.trim value
+  in
+    case mode of
+      ScriptInputTemplate ->
+        if trimmed == "" then
+          Nothing
+        else
+          Just (Script.analyzeScriptTemplateJson trimmed)
+      _ ->
+        Nothing
 
 render :: forall monad. State -> H.ComponentHTML Action () monad
 render state =
@@ -662,6 +683,7 @@ renderScriptsPage state =
             [ HP.class_ (HH.ClassName "action-row") ]
             [ renderScriptModeButton state.scriptInputMode ScriptInputCbor "CBOR hex"
             , renderScriptModeButton state.scriptInputMode ScriptInputJson "JSON"
+            , renderScriptModeButton state.scriptInputMode ScriptInputTemplate "Template JSON"
             ]
         , HH.textarea
             [ HP.class_ (HH.ClassName "text-input script-input")
@@ -671,11 +693,13 @@ renderScriptsPage state =
             , HE.onValueInput SetScriptInput
             ]
         , keyValue "Accepted input" (scriptInputModeLabel state.scriptInputMode)
-        , keyValue "Output" "Hash, validation status, canonical JSON, and script preimage CBOR"
+        , keyValue "Output" (scriptOutputLabel state.scriptInputMode)
         ]
     , sectionCard
         "Script analysis"
-        [ renderScriptAnalysisResult state.scriptAnalysisResult
+        [ case state.scriptInputMode of
+            ScriptInputTemplate -> renderScriptTemplateAnalysisResult state.scriptTemplateAnalysisResult
+            _ -> renderScriptAnalysisResult state.scriptAnalysisResult
         ]
     ]
 
@@ -1003,11 +1027,18 @@ scriptInputModeLabel :: ScriptInputMode -> String
 scriptInputModeLabel = case _ of
   ScriptInputCbor -> "Native script CBOR hex"
   ScriptInputJson -> "Native script JSON"
+  ScriptInputTemplate -> "ScriptTemplate JSON"
 
 scriptInputPlaceholder :: ScriptInputMode -> String
 scriptInputPlaceholder = case _ of
   ScriptInputCbor -> "8200581c..."
   ScriptInputJson -> "{\"all\":[\"addr_vkh1...\",{\"active_from\":120}]}"
+  ScriptInputTemplate -> "{\"cosigners\":{\"cosigner#0\":\"<xpub-hex>\"},\"template\":\"cosigner#0\"}"
+
+scriptOutputLabel :: ScriptInputMode -> String
+scriptOutputLabel = case _ of
+  ScriptInputTemplate -> "Template validation, canonical template JSON, and derived script details"
+  _ -> "Hash, validation status, canonical JSON, and script preimage CBOR"
 
 legacyStyleLabel :: Bootstrap.LegacyStyle -> String
 legacyStyleLabel = case _ of
@@ -1131,6 +1162,39 @@ renderScriptIssue issue =
   keyValue
     ("Issue (" <> issue.level <> " / " <> issue.code <> ")")
     issue.message
+
+renderScriptTemplateAnalysisResult :: forall w. Maybe (Either String Script.ScriptTemplateAnalysis) -> HH.HTML w Action
+renderScriptTemplateAnalysisResult = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Paste ScriptTemplate JSON to validate cosigners, normalize the template, and derive the underlying native script." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right result) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-grid") ]
+      ( [ keyValue "Template validation" result.templateValidationStatus
+        , keyValue "Canonical template JSON" result.canonicalTemplateJson
+        ]
+          <> map renderScriptIssue result.templateIssues
+          <>
+            if result.hasDerivedScript then
+              [ keyValue "Derived script type" result.derivedScript.scriptType
+              , keyValue "Derived validation" result.derivedScript.validationStatus
+              , keyValue "Derived hash hex" result.derivedScript.hashHex
+              , keyValue "Derived hash bech32" result.derivedScript.hashBech32
+              , keyValue "Derived canonical JSON" result.derivedScript.canonicalJson
+              , keyValue "Derived script preimage (CBOR hex)" result.derivedScript.canonicalCborHex
+              ]
+                <> map renderScriptIssue result.derivedScript.issues
+            else
+              [ keyValue "Derived script" "Unavailable until the template validates." ]
+      )
 
 renderLegacyResult :: forall w. Maybe (Either String String) -> HH.HTML w Action
 renderLegacyResult = case _ of

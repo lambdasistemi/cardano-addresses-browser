@@ -27,3 +27,5 @@ export const bootstrapVectors = fixture.bootstrapVectors.map((vector) => ({
 }));
 
 export const scriptHashVectors = fixture.scriptHashVectors;
+
+export const scriptTemplateVectors = fixture.scriptTemplateVectors;

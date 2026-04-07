@@ -6,7 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
-import Cardano.Address.Script (analyzeNativeScriptHex, analyzeNativeScriptJson)
+import Cardano.Address.Script (analyzeNativeScriptHex, analyzeNativeScriptJson, analyzeScriptTemplateJson)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.ArrayBuffer.Types (Uint8Array)
@@ -16,7 +16,7 @@ import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
-import Test.Vectors (BootstrapVector, DerivationVector, InspectionVector, ScriptHashVector, bootstrapVectors, derivationVectors, inspectionVectors, scriptHashVectors)
+import Test.Vectors (BootstrapVector, DerivationVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, bootstrapVectors, derivationVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors)
 
 main :: Effect Unit
 main = launchAff_ do
@@ -24,6 +24,7 @@ main = launchAff_ do
   liftEffect (traverse_ assertInspectionVector inspectionVectors)
   traverse_ assertBootstrapVector bootstrapVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
+  liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
 
 assertDerivationVector :: DerivationVector -> Aff Unit
 assertDerivationVector vector = do
@@ -101,3 +102,12 @@ assertScriptHashVector vector = do
       throw ("Script JSON vector mismatch: " <> vector.label)
     Left err ->
       throw ("Script JSON unexpectedly failed for " <> vector.label <> ": " <> err)
+
+assertScriptTemplateVector :: ScriptTemplateVector -> Effect Unit
+assertScriptTemplateVector vector =
+  case analyzeScriptTemplateJson vector.templateJson of
+    Right actual | actual == vector.expected -> pure unit
+    Right _ ->
+      throw ("ScriptTemplate vector mismatch: " <> vector.label)
+    Left err ->
+      throw ("ScriptTemplate unexpectedly failed for " <> vector.label <> ": " <> err)
