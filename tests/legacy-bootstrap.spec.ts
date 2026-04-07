@@ -24,9 +24,9 @@ test("legacy page constructs Icarus and Byron bootstrap addresses", async ({
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Project Overview" })).toBeVisible();
-  await page.getByRole("button", { name: /Legacy Build bootstrap addresses/ }).click();
+  await page.getByRole("button", { name: /Expert Manual bootstrap xpubs/ }).click();
   await expect(
-    page.getByRole("heading", { name: "Legacy Construction" }),
+    page.locator("h2.page-title", { hasText: "Manual Bootstrap Construction" }),
   ).toBeVisible();
 
   const addressXPubArea = page.getByPlaceholder("addr_xvk1...");

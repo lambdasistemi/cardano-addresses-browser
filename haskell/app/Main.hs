@@ -128,6 +128,7 @@ data Vectors = Vectors
     , scriptHashVectors :: [ScriptHashVector]
     , scriptTemplateVectors :: [ScriptTemplateVector]
     , bootstrapVectors :: [BootstrapVector]
+    , familyRestoreVectors :: [FamilyRestoreVector]
     }
     deriving (Eq, Generic, Show)
 
@@ -257,6 +258,21 @@ data BootstrapVector = BootstrapVector
 
 instance ToJSON BootstrapVector
 
+data FamilyRestoreVector = FamilyRestoreVector
+    { label :: Text
+    , style :: Text
+    , mnemonic :: [Text]
+    , network :: Text
+    , protocolMagic :: Int
+    , accountIndex :: Int
+    , role :: Maybe Text
+    , addressIndex :: Int
+    , expectedAddressBase58 :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON FamilyRestoreVector
+
 main :: IO ()
 main = BL.putStr (encode vectors)
 
@@ -273,6 +289,8 @@ vectors =
             concatMap scriptTemplateVectorsForMnemonic mnemonics
         , bootstrapVectors =
             concatMap bootstrapVectorsForMnemonic mnemonics
+        , familyRestoreVectors =
+            concatMap familyRestoreVectorsForMnemonic mnemonics
         }
 
 mnemonics :: [[Text]]
@@ -607,6 +625,85 @@ bootstrapVectorsForMnemonic mnemonicWords =
             (Byron.paymentAddress customByronDiscriminant (toXPub <$> byronAddress14))
         ]
 
+familyRestoreVectorsForMnemonic :: [Text] -> [FamilyRestoreVector]
+familyRestoreVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        customProtocolMagic :: Int
+        customProtocolMagic = 4242
+        customNetworkTag :: Word32
+        customNetworkTag = 4242
+        customIcarusDiscriminant :: NetworkDiscriminant Icarus.Icarus
+        customIcarusDiscriminant = (RequiresNetworkTag, NetworkTag customNetworkTag)
+        customByronDiscriminant :: NetworkDiscriminant Byron.Byron
+        customByronDiscriminant = (RequiresNetworkTag, NetworkTag customNetworkTag)
+        icarusRoot = icarusRootKeyFromMnemonic mnemonicWords
+        icarusAccount0 = icarusAccountKey icarusRoot 0
+        icarusAccount1 = icarusAccountKey icarusRoot 1
+        byronRoot = byronRootKeyFromMnemonic mnemonicWords
+        byronAccount0 = byronAccountKey byronRoot 0
+        byronAccount1 = byronAccountKey byronRoot 1
+     in [ mkFamilyRestoreVector
+            (stem <> "-family-icarus-mainnet")
+            "Icarus"
+            mnemonicWords
+            "mainnet"
+            764824073
+            0
+            (Just "external")
+            0
+            (Icarus.paymentAddress Icarus.icarusMainnet (toXPub <$> icarusAddressKey icarusAccount0 Icarus.UTxOExternal 0))
+        , mkFamilyRestoreVector
+            (stem <> "-family-icarus-preview")
+            "Icarus"
+            mnemonicWords
+            "preview"
+            2
+            0
+            (Just "internal")
+            7
+            (Icarus.paymentAddress Icarus.icarusPreview (toXPub <$> icarusAddressKey icarusAccount0 Icarus.UTxOInternal 7))
+        , mkFamilyRestoreVector
+            (stem <> "-family-icarus-custom")
+            "Icarus"
+            mnemonicWords
+            "custom"
+            customProtocolMagic
+            1
+            (Just "external")
+            3
+            (Icarus.paymentAddress customIcarusDiscriminant (toXPub <$> icarusAddressKey icarusAccount1 Icarus.UTxOExternal 3))
+        , mkFamilyRestoreVector
+            (stem <> "-family-byron-mainnet")
+            "Byron"
+            mnemonicWords
+            "mainnet"
+            764824073
+            0
+            Nothing
+            0
+            (Byron.paymentAddress Byron.byronMainnet (toXPub <$> byronAddressKey byronAccount0 0))
+        , mkFamilyRestoreVector
+            (stem <> "-family-byron-preprod")
+            "Byron"
+            mnemonicWords
+            "preprod"
+            1
+            0
+            Nothing
+            14
+            (Byron.paymentAddress Byron.byronPreprod (toXPub <$> byronAddressKey byronAccount0 14))
+        , mkFamilyRestoreVector
+            (stem <> "-family-byron-custom")
+            "Byron"
+            mnemonicWords
+            "custom"
+            customProtocolMagic
+            1
+            Nothing
+            7
+            (Byron.paymentAddress customByronDiscriminant (toXPub <$> byronAddressKey byronAccount1 7))
+        ]
+
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector
 mkDerivationVector mnemonicWords accountIx roleName addressIx =
     let root = rootKeyFromMnemonic mnemonicWords
@@ -934,6 +1031,30 @@ mkByronBootstrapVector label network protocolMagic rootXPub addressXPub derivati
         , addressXPubBech32 = bech32With CIP5.addr_xvk (byronXPubAddress addressXPub)
         , rootXPubBech32 = Just (bech32With CIP5.root_xvk (byronXPubAddress rootXPub))
         , derivationPath = Just derivationPath
+        , expectedAddressBase58 = base58 expectedAddress
+        }
+
+mkFamilyRestoreVector ::
+    Text ->
+    Text ->
+    [Text] ->
+    Text ->
+    Int ->
+    Int ->
+    Maybe Text ->
+    Int ->
+    Address ->
+    FamilyRestoreVector
+mkFamilyRestoreVector label style mnemonic network protocolMagic accountIndex role addressIndex expectedAddress =
+    FamilyRestoreVector
+        { label
+        , style
+        , mnemonic
+        , network
+        , protocolMagic
+        , accountIndex
+        , role
+        , addressIndex
         , expectedAddressBase58 = base58 expectedAddress
         }
 

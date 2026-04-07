@@ -1,10 +1,13 @@
 module Cardano.Address.Bootstrap
   ( LegacyStyle(..)
   , LegacyNetwork(..)
+  , IcarusRole(..)
   , legacyNetworkLabel
   , parseBootstrapXPub
   , constructIcarusAddress
   , constructByronAddress
+  , constructIcarusAddressFromMnemonic
+  , constructByronAddressFromMnemonic
   ) where
 
 import Prelude
@@ -17,12 +20,19 @@ import Data.ArrayBuffer.Types (Uint8Array)
 import Data.Either (Either(..))
 import Effect (Effect)
 import Effect.Aff (Aff)
+import Data.String (joinWith)
 
 data LegacyStyle
   = LegacyIcarus
   | LegacyByron
 
 derive instance eqLegacyStyle :: Eq LegacyStyle
+
+data IcarusRole
+  = IcarusExternal
+  | IcarusInternal
+
+derive instance eqIcarusRole :: Eq IcarusRole
 
 data LegacyNetwork
   = LegacyMainnet
@@ -44,6 +54,21 @@ foreign import constructByronAddressImpl
   -> Uint8Array
   -> Uint8Array
   -> String
+  -> Effect (Promise Uint8Array)
+
+foreign import constructIcarusAddressFromMnemonicImpl
+  :: Int
+  -> String
+  -> Int
+  -> Int
+  -> Int
+  -> Effect (Promise Uint8Array)
+
+foreign import constructByronAddressFromMnemonicImpl
+  :: Int
+  -> String
+  -> Int
+  -> Int
   -> Effect (Promise Uint8Array)
 
 parseBootstrapXPub :: String -> Either String Uint8Array
@@ -75,6 +100,42 @@ constructByronAddress network addressXPub rootXPub derivationPath =
         )
     )
 
+constructIcarusAddressFromMnemonic
+  :: LegacyNetwork
+  -> Array String
+  -> Int
+  -> IcarusRole
+  -> Int
+  -> Aff Address
+constructIcarusAddressFromMnemonic network words accountIndex role addressIndex =
+  map unsafeMkAddress
+    ( toAffE
+        ( constructIcarusAddressFromMnemonicImpl
+            (legacyProtocolMagic network)
+            (joinMnemonic words)
+            accountIndex
+            (icarusRoleIndex role)
+            addressIndex
+        )
+    )
+
+constructByronAddressFromMnemonic
+  :: LegacyNetwork
+  -> Array String
+  -> Int
+  -> Int
+  -> Aff Address
+constructByronAddressFromMnemonic network words accountIndex addressIndex =
+  map unsafeMkAddress
+    ( toAffE
+        ( constructByronAddressFromMnemonicImpl
+            (legacyProtocolMagic network)
+            (joinMnemonic words)
+            accountIndex
+            addressIndex
+        )
+    )
+
 legacyProtocolMagic :: LegacyNetwork -> Int
 legacyProtocolMagic = case _ of
   LegacyMainnet -> 764824073
@@ -92,3 +153,11 @@ legacyNetworkLabel = case _ of
   LegacyPreview -> "Preview"
   LegacyPreprod -> "Preprod"
   LegacyCustom magic -> "Custom (" <> show magic <> ")"
+
+icarusRoleIndex :: IcarusRole -> Int
+icarusRoleIndex = case _ of
+  IcarusExternal -> 0
+  IcarusInternal -> 1
+
+joinMnemonic :: Array String -> String
+joinMnemonic = joinWith " "

@@ -26,6 +26,11 @@ export const bootstrapVectors = fixture.bootstrapVectors.map((vector) => ({
   derivationPath: toMaybe(vector.derivationPath),
 }));
 
+export const familyRestoreVectors = fixture.familyRestoreVectors.map((vector) => ({
+  ...vector,
+  role: toMaybe(vector.role),
+}));
+
 export const scriptHashVectors = fixture.scriptHashVectors;
 
 export const scriptTemplateVectors = fixture.scriptTemplateVectors;

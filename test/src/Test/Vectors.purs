@@ -6,6 +6,7 @@ module Test.Vectors
   , ExpectedKeys
   , ExpectedScriptHash
   , ExpectedScriptTemplate
+  , FamilyRestoreVector
   , InspectionVector
   , ScriptHashVector
   , ScriptTemplateVector
@@ -13,6 +14,7 @@ module Test.Vectors
   , derivationVectors
   , inspectionVectors
   , bootstrapVectors
+  , familyRestoreVectors
   , scriptHashVectors
   , scriptTemplateVectors
   ) where
@@ -73,6 +75,18 @@ type BootstrapVector =
   , expectedAddressBase58 :: String
   }
 
+type FamilyRestoreVector =
+  { label :: String
+  , style :: String
+  , mnemonic :: Array String
+  , network :: String
+  , protocolMagic :: Int
+  , accountIndex :: Int
+  , role :: Maybe String
+  , addressIndex :: Int
+  , expectedAddressBase58 :: String
+  }
+
 type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
@@ -115,6 +129,8 @@ foreign import derivationVectors :: Array DerivationVector
 foreign import inspectionVectors :: Array InspectionVector
 
 foreign import bootstrapVectors :: Array BootstrapVector
+
+foreign import familyRestoreVectors :: Array FamilyRestoreVector
 
 foreign import scriptHashVectors :: Array ScriptHashVector
 

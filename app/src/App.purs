@@ -42,6 +42,13 @@ data PrivacyLevel
 
 derive instance eqPrivacyLevel :: Eq PrivacyLevel
 
+data RestoreFamily
+  = RestoreShelley
+  | RestoreIcarus
+  | RestoreByron
+
+derive instance eqRestoreFamily :: Eq RestoreFamily
+
 data ScriptInputMode
   = ScriptInputCbor
   | ScriptInputJson
@@ -61,6 +68,7 @@ data Action
   | SetPrivacyLevel PrivacyLevel
   | SetDerivationInput String
   | UseGeneratedMnemonic
+  | SetRestoreFamily RestoreFamily
   | SetAccountIndexInput String
   | SetAddressIndexInput String
   | SetDerivationRole Derivation.Role
@@ -84,11 +92,13 @@ type State =
   , showStatePanel :: Boolean
   , privacyLevel :: PrivacyLevel
   , derivationInput :: String
+  , restoreFamily :: RestoreFamily
   , accountIndexInput :: String
   , addressIndexInput :: String
   , derivationRole :: Derivation.Role
   , previousDerivedKeys :: Maybe Derivation.DerivedKeys
   , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
+  , familyRestoreResult :: Maybe (Either String String)
   , legacyStyle :: Bootstrap.LegacyStyle
   , legacyNetwork :: Bootstrap.LegacyNetwork
   , legacyAddressXPubInput :: String
@@ -112,11 +122,13 @@ initialState =
   , showStatePanel: false
   , privacyLevel: PrivacyHidden
   , derivationInput: ""
+  , restoreFamily: RestoreShelley
   , accountIndexInput: "0"
   , addressIndexInput: "0"
   , derivationRole: Derivation.UTxOExternal
   , previousDerivedKeys: Nothing
   , derivationResult: Nothing
+  , familyRestoreResult: Nothing
   , legacyStyle: Bootstrap.LegacyIcarus
   , legacyNetwork: Bootstrap.LegacyMainnet
   , legacyAddressXPubInput: ""
@@ -192,6 +204,10 @@ handleAction = case _ of
           { derivationInput = joinWith " " words
           }
           *> refreshDerivation
+  SetRestoreFamily family -> do
+    state <- H.get
+    H.modify_ _ { restoreFamily = family, derivationRole = normalizeRoleForFamily family state.derivationRole }
+      *> refreshDerivation
   SetAccountIndexInput value ->
     H.modify_ _ { accountIndexInput = value }
       *> refreshDerivation
@@ -208,6 +224,7 @@ handleAction = case _ of
       *> refreshLegacyConstruction
   SetLegacyNetwork network ->
     H.modify_ _ { legacyNetwork = network }
+      *> refreshDerivation
       *> refreshLegacyConstruction
   SelectLegacyCustomNetwork -> do
     state <- H.get
@@ -216,6 +233,7 @@ handleAction = case _ of
         Right magic -> Bootstrap.LegacyCustom magic
         Left _ -> Bootstrap.LegacyCustom 4242
     H.modify_ _ { legacyNetwork = nextNetwork }
+      *> refreshDerivation
       *> refreshLegacyConstruction
   SetLegacyAddressXPubInput value ->
     H.modify_ _ { legacyAddressXPubInput = value }
@@ -237,6 +255,7 @@ handleAction = case _ of
         else
           state.legacyNetwork
     H.modify_ _ { legacyCustomMagicInput = value, legacyNetwork = nextNetwork }
+      *> refreshDerivation
       *> refreshLegacyConstruction
   SetScriptInputMode mode -> do
     state <- H.get
@@ -261,17 +280,54 @@ refreshDerivation = do
     accountIndex = parseIndexInput state.accountIndexInput
     addressIndex = parseIndexInput state.addressIndexInput
   if length words == 0 then
-    H.modify_ _ { derivationResult = Nothing }
+    H.modify_ _ { derivationResult = Nothing, familyRestoreResult = Nothing }
   else if not (Mnemonic.validateMnemonic words) then
-    H.modify_ _ { derivationResult = Just (Left "Mnemonic is invalid. Check the word list and checksum.") }
-  else do
-    result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
     H.modify_ _
-      { previousDerivedKeys = latestSuccessfulDerivation state
-      , derivationResult = Just case result of
-          Left err -> Left ("Key derivation failed: " <> message err)
-          Right value -> Right value
+      { derivationResult = invalidMnemonicResult state.restoreFamily
+      , familyRestoreResult = invalidMnemonicAddressResult state.restoreFamily
       }
+  else do
+    case state.restoreFamily of
+      RestoreShelley -> do
+        result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
+        H.modify_ _
+          { previousDerivedKeys = latestSuccessfulDerivation state
+          , derivationResult = Just case result of
+              Left err -> Left ("Key derivation failed: " <> message err)
+              Right value -> Right value
+          , familyRestoreResult = Nothing
+          }
+      RestoreIcarus -> do
+        let
+          selectedNetwork = resolveLegacyNetwork state
+          role = icarusRoleFor state.derivationRole
+          result = case selectedNetwork of
+            Left err -> pure (Left err)
+            Right network -> do
+              address <- Bootstrap.constructIcarusAddressFromMnemonic network words accountIndex role addressIndex
+              pure (Right (base58 address))
+        actual <- liftAff (try result)
+        H.modify_ _
+          { derivationResult = Nothing
+          , familyRestoreResult = Just case actual of
+              Left err -> Left ("Restore failed: " <> message err)
+              Right value -> value
+          }
+      RestoreByron -> do
+        let
+          selectedNetwork = resolveLegacyNetwork state
+          result = case selectedNetwork of
+            Left err -> pure (Left err)
+            Right network -> do
+              address <- Bootstrap.constructByronAddressFromMnemonic network words accountIndex addressIndex
+              pure (Right (base58 address))
+        actual <- liftAff (try result)
+        H.modify_ _
+          { derivationResult = Nothing
+          , familyRestoreResult = Just case actual of
+              Left err -> Left ("Restore failed: " <> message err)
+              Right value -> value
+          }
 
 latestSuccessfulDerivation :: State -> Maybe Derivation.DerivedKeys
 latestSuccessfulDerivation state = case state.derivationResult of
@@ -524,9 +580,15 @@ renderDerivationPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
-        "Derivation pipeline"
+        "Restore and build"
         [ HH.p_
-            [ HH.text "Derive root, account, address, and stake keys from a BIP39 recovery phrase using the CIP-1852 path." ]
+            [ HH.text "Choose the wallet family first, then restore or build from the recovery phrase you actually have." ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "action-row") ]
+            [ renderRestoreFamilyButton state.restoreFamily RestoreShelley
+            , renderRestoreFamilyButton state.restoreFamily RestoreIcarus
+            , renderRestoreFamilyButton state.restoreFamily RestoreByron
+            ]
         , renderDerivationInput state
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
@@ -559,15 +621,50 @@ renderDerivationPage state =
                     ]
                 ]
             ]
-        , HH.div
-            [ HP.class_ (HH.ClassName "action-row") ]
-            (map (renderRoleButton state.derivationRole) derivationRoles)
-        , keyValue "Standard" "CIP-1852"
-        , keyValue "Path" (derivationPathSummary state)
+        , if familyUsesRole state.restoreFamily then
+            HH.div
+              [ HP.class_ (HH.ClassName "action-row") ]
+              (map (renderRoleButton state.derivationRole) (rolesForFamily state.restoreFamily))
+          else
+            HH.text ""
+        , if familyUsesNetwork state.restoreFamily then
+            HH.div
+              [ HP.class_ (HH.ClassName "action-row") ]
+              (map (renderLegacyNetworkButton state.legacyNetwork) legacyNetworks)
+          else
+            HH.text ""
+        , if familyUsesNetwork state.restoreFamily then
+            HH.div
+              [ HP.class_ (HH.ClassName "action-row") ]
+              [ renderLegacyCustomNetworkButton state.legacyNetwork ]
+          else
+            HH.text ""
+        , if familyUsesCustomNetwork state then
+            HH.label
+              [ HP.class_ (HH.ClassName "field-group") ]
+              [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Protocol magic" ]
+              , HH.input
+                  [ HP.class_ (HH.ClassName "inline-input")
+                  , HP.type_ HP.InputNumber
+                  , HP.placeholder "4242"
+                  , HP.value state.legacyCustomMagicInput
+                  , HE.onValueInput SetLegacyCustomMagicInput
+                  ]
+              ]
+          else
+            HH.text ""
+        , keyValue "Family" (restoreFamilyLabel state.restoreFamily)
+        , keyValue "Mode" (restoreModeSummary state.restoreFamily)
+        , keyValue "Path" (restorePathSummary state)
         ]
     , sectionCard
-        "Derived keys"
-        [ renderDerivationResult state.privacyLevel state.previousDerivedKeys state.derivationResult ]
+        (restoreOutputTitle state.restoreFamily)
+        [ case state.restoreFamily of
+            RestoreShelley ->
+              renderDerivationResult state.privacyLevel state.previousDerivedKeys state.derivationResult
+            _ ->
+              renderFamilyRestoreResult state.privacyLevel state.familyRestoreResult
+        ]
     ]
 
 renderLegacyPage :: forall w. State -> HH.HTML w Action
@@ -575,9 +672,9 @@ renderLegacyPage state =
   HH.div
     [ HP.class_ (HH.ClassName "page-grid") ]
     [ sectionCard
-        "Legacy address construction"
+        "Manual bootstrap construction"
         [ HH.p_
-            [ HH.text "Construct bootstrap addresses from extended public keys using the same Byron and Icarus semantics as cardano-addresses." ]
+            [ HH.text "Expert mode: construct bootstrap addresses directly from explicit xpub material. The default restore flow now starts from the mnemonic on the Restore page." ]
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
             (map (renderLegacyStyleButton state.legacyStyle) legacyStyles)
@@ -735,9 +832,11 @@ renderStatePanel state =
           , keyValue "Inspect result" (inspectStatus state.inspectResult)
           , keyValue "Mnemonic word count" (show state.mnemonicWordCount)
           , keyValue "Mnemonic phrase" (mnemonicStatus state.privacyLevel state.generatedMnemonic)
+          , keyValue "Restore family" (restoreFamilyLabel state.restoreFamily)
           , keyValue "Derivation role" (Derivation.roleLabel state.derivationRole)
-          , keyValue "Derivation path" (derivationPathSummary state)
+          , keyValue "Restore path" (restorePathSummary state)
           , keyValue "Derivation result" (derivationStatus state.derivationResult)
+          , keyValue "Family restore result" (familyRestoreStatus state.familyRestoreResult)
           ]
       ]
   else
@@ -871,6 +970,15 @@ renderRoleButton activeRole role =
     , HE.onClick \_ -> SetDerivationRole role
     ]
     [ HH.text (Derivation.roleLabel role) ]
+
+renderRestoreFamilyButton :: forall w. RestoreFamily -> RestoreFamily -> HH.HTML w Action
+renderRestoreFamilyButton activeFamily family =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeFamily == family then " active" else ""))
+    , HE.onClick \_ -> SetRestoreFamily family
+    ]
+    [ HH.text (restoreFamilyLabel family) ]
 
 renderLegacyStyleButton :: forall w. Bootstrap.LegacyStyle -> Bootstrap.LegacyStyle -> HH.HTML w Action
 renderLegacyStyleButton activeStyle style =
@@ -1009,6 +1117,22 @@ derivationStatus = case _ of
   Just (Left _) -> "error"
   Just (Right _) -> "derived"
 
+invalidMnemonicResult :: RestoreFamily -> Maybe (Either String Derivation.DerivedKeys)
+invalidMnemonicResult = case _ of
+  RestoreShelley -> Just (Left "Mnemonic is invalid. Check the word list and checksum.")
+  _ -> Nothing
+
+invalidMnemonicAddressResult :: RestoreFamily -> Maybe (Either String String)
+invalidMnemonicAddressResult = case _ of
+  RestoreShelley -> Nothing
+  _ -> Just (Left "Mnemonic is invalid. Check the word list and checksum.")
+
+familyRestoreStatus :: Maybe (Either String String) -> String
+familyRestoreStatus = case _ of
+  Nothing -> "idle"
+  Just (Left _) -> "error"
+  Just (Right _) -> "derived"
+
 mnemonicStatus :: PrivacyLevel -> Maybe (Array String) -> String
 mnemonicStatus privacyLevel = case _ of
   Nothing -> "empty"
@@ -1022,6 +1146,18 @@ privacyLabel :: PrivacyLevel -> String
 privacyLabel = case _ of
   PrivacyStandard -> "visible"
   PrivacyHidden -> "private"
+
+restoreFamilyLabel :: RestoreFamily -> String
+restoreFamilyLabel = case _ of
+  RestoreShelley -> "Shelley"
+  RestoreIcarus -> "Icarus"
+  RestoreByron -> "Byron"
+
+restoreModeSummary :: RestoreFamily -> String
+restoreModeSummary = case _ of
+  RestoreShelley -> "Derive keys from mnemonic using the Shelley sequential path"
+  RestoreIcarus -> "Build a bootstrap address from mnemonic using Icarus semantics"
+  RestoreByron -> "Build a bootstrap address from mnemonic using Byron semantics"
 
 scriptInputModeLabel :: ScriptInputMode -> String
 scriptInputModeLabel = case _ of
@@ -1060,6 +1196,57 @@ derivationPathSummary state =
     <> rolePathSegment state.derivationRole
     <> " / "
     <> state.addressIndexInput
+
+restorePathSummary :: State -> String
+restorePathSummary state = case state.restoreFamily of
+  RestoreShelley -> derivationPathSummary state
+  RestoreIcarus ->
+    "m / 44' / 1815' / " <> state.accountIndexInput <> "' / "
+      <> rolePathSegment (normalizeRoleForFamily RestoreIcarus state.derivationRole)
+      <> " / "
+      <> state.addressIndexInput
+  RestoreByron ->
+    "m / " <> state.accountIndexInput <> "' / " <> state.addressIndexInput
+
+restoreOutputTitle :: RestoreFamily -> String
+restoreOutputTitle = case _ of
+  RestoreShelley -> "Derived keys"
+  _ -> "Derived address"
+
+familyUsesRole :: RestoreFamily -> Boolean
+familyUsesRole = case _ of
+  RestoreShelley -> true
+  RestoreIcarus -> true
+  RestoreByron -> false
+
+familyUsesNetwork :: RestoreFamily -> Boolean
+familyUsesNetwork = case _ of
+  RestoreShelley -> false
+  _ -> true
+
+familyUsesCustomNetwork :: State -> Boolean
+familyUsesCustomNetwork state =
+  familyUsesNetwork state.restoreFamily && isLegacyCustomSelected state
+
+rolesForFamily :: RestoreFamily -> Array Derivation.Role
+rolesForFamily = case _ of
+  RestoreShelley -> derivationRoles
+  RestoreIcarus -> [ Derivation.UTxOExternal, Derivation.UTxOInternal ]
+  RestoreByron -> []
+
+normalizeRoleForFamily :: RestoreFamily -> Derivation.Role -> Derivation.Role
+normalizeRoleForFamily family role = case family of
+  RestoreShelley -> role
+  RestoreIcarus -> case role of
+    Derivation.Stake -> Derivation.UTxOExternal
+    other -> other
+  RestoreByron -> Derivation.UTxOExternal
+
+icarusRoleFor :: Derivation.Role -> Bootstrap.IcarusRole
+icarusRoleFor role = case normalizeRoleForFamily RestoreIcarus role of
+  Derivation.UTxOExternal -> Bootstrap.IcarusExternal
+  Derivation.UTxOInternal -> Bootstrap.IcarusInternal
+  Derivation.Stake -> Bootstrap.IcarusExternal
 
 rolePathSegment :: Derivation.Role -> String
 rolePathSegment = case _ of
@@ -1131,6 +1318,48 @@ renderDerivedValue privacyLevel changed label value =
           ]
           [ HH.text value ]
     ]
+
+renderFamilyRestoreResult :: forall w. PrivacyLevel -> Maybe (Either String String) -> HH.HTML w Action
+renderFamilyRestoreResult privacyLevel = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "Choose a family, paste a recovery phrase, and the browser will derive the matching address locally." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right address) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "output-card") ]
+          [ HH.div
+              [ HP.class_ (HH.ClassName "output-meta") ]
+              [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text "Base58 address" ]
+              , HH.div
+                  [ HP.class_ (HH.ClassName "output-actions") ]
+                  [ HH.button
+                      [ HP.class_ (HH.ClassName "secondary-btn")
+                      , HE.onClick \_ -> CopyValue address
+                      ]
+                      [ HH.text "Copy" ]
+                  ]
+              ]
+          , if privacyLevel == PrivacyHidden then
+              HH.div
+                [ HP.class_ (HH.ClassName "privacy-note") ]
+                [ HH.p_ [ HH.text "Value hidden in private mode. Use Copy to move it to the clipboard." ] ]
+            else
+              HH.div
+                [ HP.class_ (HH.ClassName "output-value")
+                , HP.title address
+                ]
+                [ HH.text address ]
+          ]
+      ]
 
 renderScriptAnalysisResult :: forall w. Maybe (Either String Script.ScriptAnalysis) -> HH.HTML w Action
 renderScriptAnalysisResult = case _ of
@@ -1244,8 +1473,8 @@ navItems =
   [ { page: Overview, label: "Overview", note: "Workspace health" }
   , { page: Inspect, label: "Inspect", note: "Decode addresses" }
   , { page: Mnemonic, label: "Mnemonic", note: "Generate recovery phrases" }
-  , { page: Derivation, label: "Derivation", note: "Follow CIP-1852" }
-  , { page: Legacy, label: "Legacy", note: "Build bootstrap addresses" }
+  , { page: Derivation, label: "Restore", note: "Choose family first" }
+  , { page: Legacy, label: "Expert", note: "Manual bootstrap xpubs" }
   , { page: Scripts, label: "Scripts", note: "Hash native scripts" }
   , { page: Library, label: "Library", note: "Reusable exports" }
   ]
@@ -1255,7 +1484,7 @@ pageTitle = case _ of
   Overview -> "Project Overview"
   Inspect -> "Address Inspection"
   Mnemonic -> "Mnemonic Generation"
-  Derivation -> "Key Derivation"
-  Legacy -> "Legacy Construction"
+  Derivation -> "Restore And Build"
+  Legacy -> "Manual Bootstrap Construction"
   Scripts -> "Native Scripts"
   Library -> "Library Surface"
