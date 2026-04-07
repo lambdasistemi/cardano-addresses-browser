@@ -33,13 +33,15 @@
             inherit indexState pkgs;
           };
           playwrightBrowsers = pkgs.playwright-driver.browsers;
-          apps = import ./nix/apps {
-            inherit pkgs playwrightBrowsers;
-          };
           test-vectors-json = pkgs.runCommand "cardano-addresses-browser-test-vectors" {} ''
             mkdir -p $out
             ${haskellProject.packages.test-vectors-exe}/bin/cardano-addresses-browser-vectors > $out/vectors.json
           '';
+          testVectorsPath = test-vectors-json;
+          apps = import ./nix/apps {
+            inherit pkgs playwrightBrowsers testVectorsPath;
+            repoRoot = ./.;
+          };
         in
         {
           packages.playwright-browsers = playwrightBrowsers;
