@@ -183,6 +183,7 @@ instance ToJSON DetailRow
 data ScriptHashVector = ScriptHashVector
     { label :: Text
     , scriptCborHex :: Text
+    , scriptJson :: Text
     , expected :: ExpectedScriptHash
     }
     deriving (Eq, Generic, Show)
@@ -193,6 +194,7 @@ data ExpectedScriptHash = ExpectedScriptHash
     { hashHex :: Text
     , hashBech32 :: Text
     , canonicalCborHex :: Text
+    , canonicalJson :: Text
     , scriptType :: Text
     , validationStatus :: Text
     , issues :: [ValidationIssue]
@@ -658,11 +660,13 @@ mkScriptHashVector label script =
      in ScriptHashVector
             { label
             , scriptCborHex = hexText serialized
+            , scriptJson = jsonText script
             , expected =
                 ExpectedScriptHash
                     { hashHex = scriptHashHex scriptHash
                     , hashBech32 = scriptHashToText scriptHash Policy Nothing
                     , canonicalCborHex = hexText serialized
+                    , canonicalJson = jsonText script
                     , scriptType = scriptTypeLabel script
                     , validationStatus =
                         if null issues
@@ -973,3 +977,9 @@ hexText :: BS.ByteString -> Text
 hexText =
     Text.decodeUtf8
         . Encoding.encode Encoding.EBase16
+
+jsonText :: (ToJSON a) => a -> Text
+jsonText =
+    Text.decodeUtf8
+        . BL.toStrict
+        . encode
