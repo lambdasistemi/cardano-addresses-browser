@@ -574,14 +574,6 @@ renderDerivationPage state =
             [ HH.text "Choose the wallet family first, then restore or build from the recovery phrase you actually have." ]
         , HH.div
             [ HP.class_ (HH.ClassName "action-row") ]
-            [ HH.button
-                [ HP.class_ (HH.ClassName "secondary-btn")
-                , HE.onClick \_ -> ToggleRestorePhraseVisibility
-                ]
-                [ HH.text (if state.showRestorePhrase then "Hide phrase" else "Show phrase") ]
-            ]
-        , HH.div
-            [ HP.class_ (HH.ClassName "action-row") ]
             [ renderRestoreFamilyButton state.restoreFamily RestoreShelley
             , renderRestoreFamilyButton state.restoreFamily RestoreIcarus
             , renderRestoreFamilyButton state.restoreFamily RestoreByron
