@@ -26,4 +26,5 @@ executable cardano-addresses-browser-vectors
     , bech32 >= 1.1 && < 1.2
     , bytestring >= 0.11 && < 0.13
     , cardano-addresses >= 4.0 && < 4.1
+    , cborg >= 0.2 && < 0.3
     , text >= 2.0 && < 2.2
