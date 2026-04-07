@@ -129,6 +129,7 @@ data Vectors = Vectors
     , scriptTemplateVectors :: [ScriptTemplateVector]
     , bootstrapVectors :: [BootstrapVector]
     , familyRestoreVectors :: [FamilyRestoreVector]
+    , shelleyRestoreVectors :: [ShelleyRestoreVector]
     }
     deriving (Eq, Generic, Show)
 
@@ -273,6 +274,22 @@ data FamilyRestoreVector = FamilyRestoreVector
 
 instance ToJSON FamilyRestoreVector
 
+data ShelleyRestoreVector = ShelleyRestoreVector
+    { label :: Text
+    , mnemonic :: [Text]
+    , network :: Text
+    , networkTag :: Int
+    , accountIndex :: Int
+    , role :: Text
+    , addressIndex :: Int
+    , paymentAddressBech32 :: Maybe Text
+    , delegationAddressBech32 :: Maybe Text
+    , rewardAddressBech32 :: Text
+    }
+    deriving (Eq, Generic, Show)
+
+instance ToJSON ShelleyRestoreVector
+
 main :: IO ()
 main = BL.putStr (encode vectors)
 
@@ -291,6 +308,8 @@ vectors =
             concatMap bootstrapVectorsForMnemonic mnemonics
         , familyRestoreVectors =
             concatMap familyRestoreVectorsForMnemonic mnemonics
+        , shelleyRestoreVectors =
+            concatMap shelleyRestoreVectorsForMnemonic mnemonics
         }
 
 mnemonics :: [[Text]]
@@ -704,6 +723,122 @@ familyRestoreVectorsForMnemonic mnemonicWords =
             (Byron.paymentAddress customByronDiscriminant (toXPub <$> byronAddressKey byronAccount1 7))
         ]
 
+shelleyRestoreVectorsForMnemonic :: [Text] -> [ShelleyRestoreVector]
+shelleyRestoreVectorsForMnemonic mnemonicWords =
+    let stem = mnemonicStem mnemonicWords
+        root = rootKeyFromMnemonic mnemonicWords
+        account0 = accountKey root 0
+        account1 = accountKey root 1
+        external0 = addressKey account0 UTxOExternal 0
+        internal7 = addressKey account0 UTxOInternal 7
+        external1 = addressKey account1 UTxOExternal 1
+        stake0 = delegationKey account0
+        stake1 = delegationKey account1
+        paymentMainnet0 =
+            paymentAddress shelleyMainnet (PaymentFromExtendedKey (toXPub <$> external0))
+        baseMainnet0 =
+            delegationAddress
+                shelleyMainnet
+                (PaymentFromExtendedKey (toXPub <$> external0))
+                (DelegationFromExtendedKey (toXPub <$> stake0))
+        rewardMainnet0 =
+            unsafeRight $
+                stakeAddress shelleyMainnet (DelegationFromExtendedKey (toXPub <$> stake0))
+        paymentPreprod0 =
+            paymentAddress shelleyTestnet (PaymentFromExtendedKey (toXPub <$> external0))
+        basePreprod0 =
+            delegationAddress
+                shelleyTestnet
+                (PaymentFromExtendedKey (toXPub <$> external0))
+                (DelegationFromExtendedKey (toXPub <$> stake0))
+        rewardPreprod0 =
+            unsafeRight $
+                stakeAddress shelleyTestnet (DelegationFromExtendedKey (toXPub <$> stake0))
+        paymentCustom1 =
+            paymentAddress (unsafeNetworkDiscriminant 3) (PaymentFromExtendedKey (toXPub <$> external1))
+        baseCustom1 =
+            delegationAddress
+                (unsafeNetworkDiscriminant 3)
+                (PaymentFromExtendedKey (toXPub <$> external1))
+                (DelegationFromExtendedKey (toXPub <$> stake1))
+        rewardCustom1 =
+            unsafeRight $
+                stakeAddress (unsafeNetworkDiscriminant 3) (DelegationFromExtendedKey (toXPub <$> stake1))
+        paymentChange7 =
+            paymentAddress shelleyMainnet (PaymentFromExtendedKey (toXPub <$> internal7))
+        baseChange7 =
+            delegationAddress
+                shelleyMainnet
+                (PaymentFromExtendedKey (toXPub <$> internal7))
+                (DelegationFromExtendedKey (toXPub <$> stake0))
+     in [ mkShelleyRestoreVector
+            (stem <> "-shelley-mainnet-external-0")
+            mnemonicWords
+            "mainnet"
+            1
+            0
+            "external"
+            0
+            (Just paymentMainnet0)
+            (Just baseMainnet0)
+            rewardMainnet0
+        , mkShelleyRestoreVector
+            (stem <> "-shelley-preprod-external-0")
+            mnemonicWords
+            "preprod"
+            0
+            0
+            "external"
+            0
+            (Just paymentPreprod0)
+            (Just basePreprod0)
+            rewardPreprod0
+        , mkShelleyRestoreVector
+            (stem <> "-shelley-preview-external-0")
+            mnemonicWords
+            "preview"
+            0
+            0
+            "external"
+            0
+            (Just paymentPreprod0)
+            (Just basePreprod0)
+            rewardPreprod0
+        , mkShelleyRestoreVector
+            (stem <> "-shelley-mainnet-internal-7")
+            mnemonicWords
+            "mainnet"
+            1
+            0
+            "internal"
+            7
+            (Just paymentChange7)
+            (Just baseChange7)
+            rewardMainnet0
+        , mkShelleyRestoreVector
+            (stem <> "-shelley-mainnet-stake-0")
+            mnemonicWords
+            "mainnet"
+            1
+            0
+            "stake"
+            0
+            Nothing
+            Nothing
+            rewardMainnet0
+        , mkShelleyRestoreVector
+            (stem <> "-shelley-custom-3-external-1")
+            mnemonicWords
+            "custom"
+            3
+            1
+            "external"
+            1
+            (Just paymentCustom1)
+            (Just baseCustom1)
+            rewardCustom1
+        ]
+
 mkDerivationVector :: [Text] -> Int -> Text -> Int -> DerivationVector
 mkDerivationVector mnemonicWords accountIx roleName addressIx =
     let root = rootKeyFromMnemonic mnemonicWords
@@ -729,6 +864,32 @@ mkDerivationVector mnemonicWords accountIx roleName addressIx =
             , addressIndex = addressIx
             , expected
             }
+
+mkShelleyRestoreVector ::
+    Text ->
+    [Text] ->
+    Text ->
+    Int ->
+    Int ->
+    Text ->
+    Int ->
+    Maybe Address ->
+    Maybe Address ->
+    Address ->
+    ShelleyRestoreVector
+mkShelleyRestoreVector label mnemonicWords network networkTag accountIndex role addressIndex paymentAddress delegationAddress rewardAddress =
+    ShelleyRestoreVector
+        { label
+        , mnemonic = mnemonicWords
+        , network
+        , networkTag
+        , accountIndex
+        , role
+        , addressIndex
+        , paymentAddressBech32 = bech32 <$> paymentAddress
+        , delegationAddressBech32 = bech32 <$> delegationAddress
+        , rewardAddressBech32 = bech32 rewardAddress
+        }
 
 expectedKeys ::
     Shelley depth XPrv ->

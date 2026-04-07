@@ -6,6 +6,7 @@ import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
+import Cardano.Address.Shelley as Shelley
 import Cardano.Address.Script as Script
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
@@ -64,6 +65,9 @@ data Action
   | SetDerivationInput String
   | UseGeneratedMnemonic
   | SetRestoreFamily RestoreFamily
+  | SetShelleyNetwork Shelley.ShelleyNetwork
+  | SelectShelleyCustomNetwork
+  | SetShelleyCustomNetworkTagInput String
   | SetAccountIndexInput String
   | SetAddressIndexInput String
   | SetDerivationRole Derivation.Role
@@ -89,11 +93,14 @@ type State =
   , showDerivedKeys :: Boolean
   , derivationInput :: String
   , restoreFamily :: RestoreFamily
+  , shelleyNetwork :: Shelley.ShelleyNetwork
+  , shelleyCustomNetworkTagInput :: String
   , accountIndexInput :: String
   , addressIndexInput :: String
   , derivationRole :: Derivation.Role
   , previousDerivedKeys :: Maybe Derivation.DerivedKeys
   , derivationResult :: Maybe (Either String Derivation.DerivedKeys)
+  , shelleyAddressesResult :: Maybe (Either String Shelley.ShelleyAddresses)
   , familyRestoreResult :: Maybe (Either String String)
   , legacyStyle :: Bootstrap.LegacyStyle
   , legacyNetwork :: Bootstrap.LegacyNetwork
@@ -120,11 +127,14 @@ initialState =
   , showDerivedKeys: false
   , derivationInput: ""
   , restoreFamily: RestoreShelley
+  , shelleyNetwork: Shelley.ShelleyMainnet
+  , shelleyCustomNetworkTagInput: "3"
   , accountIndexInput: "0"
   , addressIndexInput: "0"
   , derivationRole: Derivation.UTxOExternal
   , previousDerivedKeys: Nothing
   , derivationResult: Nothing
+  , shelleyAddressesResult: Nothing
   , familyRestoreResult: Nothing
   , legacyStyle: Bootstrap.LegacyIcarus
   , legacyNetwork: Bootstrap.LegacyMainnet
@@ -193,6 +203,29 @@ handleAction = case _ of
     H.modify_ \state -> state { showRestorePhrase = not state.showRestorePhrase }
   ToggleDerivedKeysVisibility ->
     H.modify_ \state -> state { showDerivedKeys = not state.showDerivedKeys }
+  SetShelleyNetwork network ->
+    H.modify_ _ { shelleyNetwork = network }
+      *> refreshDerivation
+  SelectShelleyCustomNetwork -> do
+    state <- H.get
+    let
+      nextNetwork = case parseShelleyCustomNetworkTag state.shelleyCustomNetworkTagInput of
+        Right networkTag -> Shelley.ShelleyCustom networkTag
+        Left _ -> Shelley.ShelleyCustom 3
+    H.modify_ _ { shelleyNetwork = nextNetwork }
+      *> refreshDerivation
+  SetShelleyCustomNetworkTagInput value -> do
+    state <- H.get
+    let
+      nextNetwork =
+        if isShelleyCustomNetwork state.shelleyNetwork then
+          case parseShelleyCustomNetworkTag value of
+            Right networkTag -> Shelley.ShelleyCustom networkTag
+            Left _ -> state.shelleyNetwork
+        else
+          state.shelleyNetwork
+    H.modify_ _ { shelleyCustomNetworkTagInput = value, shelleyNetwork = nextNetwork }
+      *> refreshDerivation
   SetDerivationInput value ->
     H.modify_ _ { derivationInput = value }
       *> refreshDerivation
@@ -281,21 +314,27 @@ refreshDerivation = do
     accountIndex = parseIndexInput state.accountIndexInput
     addressIndex = parseIndexInput state.addressIndexInput
   if length words == 0 then
-    H.modify_ _ { derivationResult = Nothing, familyRestoreResult = Nothing }
+    H.modify_ _ { derivationResult = Nothing, shelleyAddressesResult = Nothing, familyRestoreResult = Nothing }
   else if not (Mnemonic.validateMnemonic words) then
     H.modify_ _
       { derivationResult = invalidMnemonicResult state.restoreFamily
+      , shelleyAddressesResult = Nothing
       , familyRestoreResult = invalidMnemonicAddressResult state.restoreFamily
       }
   else do
     case state.restoreFamily of
       RestoreShelley -> do
         result <- liftAff (try (Derivation.derivePipeline words accountIndex state.derivationRole addressIndex))
+        let
+          shelleyAddressesResult = case result of
+            Left _ -> Nothing
+            Right value -> Just (constructShelleyAddressesForState state value)
         H.modify_ _
           { previousDerivedKeys = latestSuccessfulDerivation state
           , derivationResult = Just case result of
               Left err -> Left ("Key derivation failed: " <> message err)
               Right value -> Right value
+          , shelleyAddressesResult = shelleyAddressesResult
           , familyRestoreResult = Nothing
           }
       RestoreIcarus -> do
@@ -310,6 +349,7 @@ refreshDerivation = do
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
+          , shelleyAddressesResult = Nothing
           , familyRestoreResult = Just case actual of
               Left err -> Left ("Restore failed: " <> message err)
               Right value -> value
@@ -325,6 +365,7 @@ refreshDerivation = do
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
+          , shelleyAddressesResult = Nothing
           , familyRestoreResult = Just case actual of
               Left err -> Left ("Restore failed: " <> message err)
               Right value -> value
@@ -334,6 +375,19 @@ latestSuccessfulDerivation :: State -> Maybe Derivation.DerivedKeys
 latestSuccessfulDerivation state = case state.derivationResult of
   Just (Right keys) -> Just keys
   _ -> state.previousDerivedKeys
+
+constructShelleyAddressesForState :: State -> Derivation.DerivedKeys -> Either String Shelley.ShelleyAddresses
+constructShelleyAddressesForState state keys = do
+  network <- resolveShelleyNetwork state
+  Shelley.constructShelleyAddresses
+    network
+    (paymentXPubFor state.derivationRole keys)
+    keys.stakePublicKeyBech32
+
+paymentXPubFor :: Derivation.Role -> Derivation.DerivedKeys -> Maybe String
+paymentXPubFor role keys = case role of
+  Derivation.Stake -> Nothing
+  _ -> Just keys.addressPublicKeyBech32
 
 refreshLegacyConstruction :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshLegacyConstruction = do
@@ -637,6 +691,34 @@ renderDerivationPage state =
               (map (renderRoleButton state.derivationRole) (rolesForFamily state.restoreFamily))
           else
             HH.text ""
+        , if state.restoreFamily == RestoreShelley then
+            HH.div
+              [ HP.class_ (HH.ClassName "action-row") ]
+              (map (renderShelleyNetworkButton state.shelleyNetwork) shelleyNetworks)
+          else
+            HH.text ""
+        , if state.restoreFamily == RestoreShelley then
+            HH.div
+              [ HP.class_ (HH.ClassName "action-row") ]
+              [ renderShelleyCustomNetworkButton state.shelleyNetwork ]
+          else
+            HH.text ""
+        , if state.restoreFamily == RestoreShelley && isShelleyCustomNetwork state.shelleyNetwork then
+            HH.label
+              [ HP.class_ (HH.ClassName "field-group") ]
+              [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Network tag" ]
+              , HH.input
+                  [ HP.class_ (HH.ClassName "inline-input")
+                  , HP.type_ HP.InputNumber
+                  , HP.min 0.0
+                  , HP.max 15.0
+                  , HP.placeholder "3"
+                  , HP.value state.shelleyCustomNetworkTagInput
+                  , HE.onValueInput SetShelleyCustomNetworkTagInput
+                  ]
+              ]
+          else
+            HH.text ""
         , if familyUsesNetwork state.restoreFamily then
             HH.div
               [ HP.class_ (HH.ClassName "action-row") ]
@@ -664,6 +746,10 @@ renderDerivationPage state =
           else
             HH.text ""
         , keyValue "Family" (restoreFamilyLabel state.restoreFamily)
+        , if state.restoreFamily == RestoreShelley then
+            keyValue "Network" (shelleyNetworkSummary state)
+          else
+            HH.text ""
         , keyValue "Mode" (restoreModeSummary state.restoreFamily)
         , keyValue "Path" (restorePathSummary state)
         ]
@@ -671,7 +757,11 @@ renderDerivationPage state =
         (restoreOutputTitle state.restoreFamily)
         [ case state.restoreFamily of
             RestoreShelley ->
-              renderDerivationResult state.showDerivedKeys state.previousDerivedKeys state.derivationResult
+              renderShelleyRestoreResult
+                state.showDerivedKeys
+                state.previousDerivedKeys
+                state.derivationResult
+                state.shelleyAddressesResult
             _ ->
               renderFamilyRestoreResult state.familyRestoreResult
         ]
@@ -991,6 +1081,24 @@ renderRestoreFamilyButton activeFamily family =
     ]
     [ HH.text (restoreFamilyLabel family) ]
 
+renderShelleyNetworkButton :: forall w. Shelley.ShelleyNetwork -> Shelley.ShelleyNetwork -> HH.HTML w Action
+renderShelleyNetworkButton activeNetwork network =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if activeNetwork == network then " active" else ""))
+    , HE.onClick \_ -> SetShelleyNetwork network
+    ]
+    [ HH.text (Shelley.shelleyNetworkLabel network) ]
+
+renderShelleyCustomNetworkButton :: forall w. Shelley.ShelleyNetwork -> HH.HTML w Action
+renderShelleyCustomNetworkButton activeNetwork =
+  HH.button
+    [ HP.class_
+        (HH.ClassName ("secondary-btn" <> if isShelleyCustomNetwork activeNetwork then " active" else ""))
+    , HE.onClick \_ -> SelectShelleyCustomNetwork
+    ]
+    [ HH.text "Custom" ]
+
 renderLegacyStyleButton :: forall w. Bootstrap.LegacyStyle -> Bootstrap.LegacyStyle -> HH.HTML w Action
 renderLegacyStyleButton activeStyle style =
   HH.button
@@ -1082,6 +1190,13 @@ legacyNetworks =
   , Bootstrap.LegacyPreprod
   ]
 
+shelleyNetworks :: Array Shelley.ShelleyNetwork
+shelleyNetworks =
+  [ Shelley.ShelleyMainnet
+  , Shelley.ShelleyPreprod
+  , Shelley.ShelleyPreview
+  ]
+
 isLegacyCustomNetwork :: Bootstrap.LegacyNetwork -> Boolean
 isLegacyCustomNetwork = case _ of
   Bootstrap.LegacyCustom _ -> true
@@ -1105,6 +1220,32 @@ resolveLegacyNetwork :: State -> Either String Bootstrap.LegacyNetwork
 resolveLegacyNetwork state = case state.legacyNetwork of
   Bootstrap.LegacyCustom _ -> Bootstrap.LegacyCustom <$> parseLegacyCustomMagic state.legacyCustomMagicInput
   network -> Right network
+
+parseShelleyCustomNetworkTag :: String -> Either String Int
+parseShelleyCustomNetworkTag rawValue =
+  let
+    trimmed = String.trim rawValue
+  in
+    if trimmed == "" then
+      Left "Enter a custom Shelley network tag."
+    else case Int.fromString trimmed of
+      Just networkTag | networkTag >= 0 && networkTag <= 15 -> Right networkTag
+      _ -> Left "Enter a Shelley network tag between 0 and 15."
+
+resolveShelleyNetwork :: State -> Either String Shelley.ShelleyNetwork
+resolveShelleyNetwork state = case state.shelleyNetwork of
+  Shelley.ShelleyCustom _ -> Shelley.ShelleyCustom <$> parseShelleyCustomNetworkTag state.shelleyCustomNetworkTagInput
+  network -> Right network
+
+isShelleyCustomNetwork :: Shelley.ShelleyNetwork -> Boolean
+isShelleyCustomNetwork = case _ of
+  Shelley.ShelleyCustom _ -> true
+  _ -> false
+
+shelleyNetworkSummary :: State -> String
+shelleyNetworkSummary state = case resolveShelleyNetwork state of
+  Right network -> Shelley.shelleyNetworkLabel network
+  Left err -> "Custom (" <> err <> ")"
 
 legacyNetworkSummary :: State -> String
 legacyNetworkSummary state = case resolveLegacyNetwork state of
@@ -1159,7 +1300,7 @@ restoreFamilyLabel = case _ of
 
 restoreModeSummary :: RestoreFamily -> String
 restoreModeSummary = case _ of
-  RestoreShelley -> "Derive keys from mnemonic using the Shelley sequential path"
+  RestoreShelley -> "Derive keys and build Shelley payment, base, and reward addresses from mnemonic"
   RestoreIcarus -> "Build a bootstrap address from mnemonic using Icarus semantics"
   RestoreByron -> "Build a bootstrap address from mnemonic using Byron semantics"
 
@@ -1214,7 +1355,7 @@ restorePathSummary state = case state.restoreFamily of
 
 restoreOutputTitle :: RestoreFamily -> String
 restoreOutputTitle = case _ of
-  RestoreShelley -> "Derived keys"
+  RestoreShelley -> "Derived addresses and keys"
   _ -> "Derived address"
 
 familyUsesRole :: RestoreFamily -> Boolean
@@ -1338,6 +1479,102 @@ renderDerivedPublicValue :: forall w. Boolean -> String -> String -> HH.HTML w A
 renderDerivedPublicValue changed label value =
   HH.div
     [ HP.class_ (HH.ClassName ("output-card" <> if changed then " changed" else "")) ]
+    [ HH.div
+        [ HP.class_ (HH.ClassName "output-meta") ]
+        [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "output-actions") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> CopyValue value
+                ]
+                [ HH.text "Copy" ]
+            ]
+        ]
+    , HH.div
+        [ HP.class_ (HH.ClassName "output-value")
+        , HP.title value
+        ]
+        [ HH.text value ]
+    ]
+
+renderShelleyRestoreResult
+  :: forall w
+   . Boolean
+  -> Maybe Derivation.DerivedKeys
+  -> Maybe (Either String Derivation.DerivedKeys)
+  -> Maybe (Either String Shelley.ShelleyAddresses)
+  -> HH.HTML w Action
+renderShelleyRestoreResult showPrivateKeys previousKeys derivationResult shelleyAddressesResult = case derivationResult of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "empty-state") ]
+      [ HH.p_
+          [ HH.text "No Shelley restore run yet. Paste a mnemonic to derive keys and build addresses." ]
+      ]
+  Just (Left err) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "result-error") ]
+      [ HH.text err ]
+  Just (Right keys) ->
+    HH.div
+      [ HP.class_ (HH.ClassName "derivation-result") ]
+      ( renderShelleyAddressSection shelleyAddressesResult
+          <>
+            [ HH.div
+                [ HP.class_ (HH.ClassName "action-row") ]
+                [ HH.button
+                    [ HP.class_ (HH.ClassName "secondary-btn")
+                    , HE.onClick \_ -> ToggleDerivedKeysVisibility
+                    ]
+                    [ HH.text (if showPrivateKeys then "Hide private keys" else "Show private keys") ]
+                ]
+            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.rootKeyBech32 keys) "Root private key" keys.rootKeyBech32
+            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.accountKeyBech32 keys) "Account private key" keys.accountKeyBech32
+            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.addressKeyBech32 keys) "Address private key" keys.addressKeyBech32
+            , renderDerivedPublicValue (hasChanged previousKeys _.addressPublicKeyBech32 keys) "Address public key" keys.addressPublicKeyBech32
+            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.stakeKeyBech32 keys) "Stake private key" keys.stakeKeyBech32
+            , renderDerivedPublicValue (hasChanged previousKeys _.stakePublicKeyBech32 keys) "Stake public key" keys.stakePublicKeyBech32
+            ]
+      )
+
+renderShelleyAddressSection
+  :: forall w
+   . Maybe (Either String Shelley.ShelleyAddresses)
+  -> Array (HH.HTML w Action)
+renderShelleyAddressSection = case _ of
+  Nothing ->
+    []
+  Just (Left err) ->
+    [ HH.div
+        [ HP.class_ (HH.ClassName "result-error") ]
+        [ HH.text err ]
+    ]
+  Just (Right addresses) ->
+    [ maybeAddressCard "Payment address" addresses.paymentAddressBech32
+    , maybeAddressCard "Base address" addresses.delegationAddressBech32
+    , addressCard "Reward address" addresses.rewardAddressBech32
+    ]
+
+maybeAddressCard :: forall w. String -> Maybe String -> HH.HTML w Action
+maybeAddressCard label = case _ of
+  Nothing ->
+    HH.div
+      [ HP.class_ (HH.ClassName "output-card") ]
+      [ HH.div
+          [ HP.class_ (HH.ClassName "output-meta") ]
+          [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ] ]
+      , HH.div
+          [ HP.class_ (HH.ClassName "privacy-note") ]
+          [ HH.p_ [ HH.text "Unavailable when the selected role does not derive a payment credential." ] ]
+      ]
+  Just value ->
+    addressCard label value
+
+addressCard :: forall w. String -> String -> HH.HTML w Action
+addressCard label value =
+  HH.div
+    [ HP.class_ (HH.ClassName "output-card") ]
     [ HH.div
         [ HP.class_ (HH.ClassName "output-meta") ]
         [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]

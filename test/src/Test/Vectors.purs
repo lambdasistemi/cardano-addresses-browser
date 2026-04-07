@@ -8,6 +8,7 @@ module Test.Vectors
   , ExpectedScriptTemplate
   , FamilyRestoreVector
   , InspectionVector
+  , ShelleyRestoreVector
   , ScriptHashVector
   , ScriptTemplateVector
   , ValidationIssue
@@ -15,6 +16,7 @@ module Test.Vectors
   , inspectionVectors
   , bootstrapVectors
   , familyRestoreVectors
+  , shelleyRestoreVectors
   , scriptHashVectors
   , scriptTemplateVectors
   ) where
@@ -87,6 +89,19 @@ type FamilyRestoreVector =
   , expectedAddressBase58 :: String
   }
 
+type ShelleyRestoreVector =
+  { label :: String
+  , mnemonic :: Array String
+  , network :: String
+  , networkTag :: Int
+  , accountIndex :: Int
+  , role :: String
+  , addressIndex :: Int
+  , paymentAddressBech32 :: Maybe String
+  , delegationAddressBech32 :: Maybe String
+  , rewardAddressBech32 :: String
+  }
+
 type ExpectedScriptHash =
   { hashHex :: String
   , hashBech32 :: String
@@ -131,6 +146,8 @@ foreign import inspectionVectors :: Array InspectionVector
 foreign import bootstrapVectors :: Array BootstrapVector
 
 foreign import familyRestoreVectors :: Array FamilyRestoreVector
+
+foreign import shelleyRestoreVectors :: Array ShelleyRestoreVector
 
 foreign import scriptHashVectors :: Array ScriptHashVector
 
