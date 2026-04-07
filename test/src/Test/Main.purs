@@ -16,13 +16,14 @@ import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
-import Test.Vectors (BootstrapVector, DerivationVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, bootstrapVectors, derivationVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors)
+import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors)
 
 main :: Effect Unit
 main = launchAff_ do
   traverse_ assertDerivationVector derivationVectors
   liftEffect (traverse_ assertInspectionVector inspectionVectors)
   traverse_ assertBootstrapVector bootstrapVectors
+  traverse_ assertFamilyRestoreVector familyRestoreVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
 
@@ -73,6 +74,28 @@ assertBootstrapVector vector = do
   when (base58 actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Bootstrap vector mismatch: " <> vector.label))
 
+assertFamilyRestoreVector :: FamilyRestoreVector -> Aff Unit
+assertFamilyRestoreVector vector = do
+  actual <- case vector.style of
+    "Icarus" ->
+      Bootstrap.constructIcarusAddressFromMnemonic
+        (parseLegacyNetwork vector.protocolMagic)
+        vector.mnemonic
+        vector.accountIndex
+        (parseIcarusRole vector.role)
+        vector.addressIndex
+    "Byron" ->
+      Bootstrap.constructByronAddressFromMnemonic
+        (parseLegacyNetwork vector.protocolMagic)
+        vector.mnemonic
+        vector.accountIndex
+        vector.addressIndex
+    other ->
+      liftEffect (throw ("Unsupported family restore style: " <> other))
+
+  when (base58 actual /= vector.expectedAddressBase58) do
+    liftEffect (throw ("Family restore vector mismatch: " <> vector.label))
+
 parseXPub :: String -> Effect Uint8Array
 parseXPub value = case Bootstrap.parseBootstrapXPub value of
   Right parsed -> pure parsed
@@ -86,6 +109,13 @@ parseLegacyNetwork = case _ of
   2 -> Bootstrap.LegacyPreview
   1 -> Bootstrap.LegacyPreprod
   magic -> Bootstrap.LegacyCustom magic
+
+parseIcarusRole :: Maybe String -> Bootstrap.IcarusRole
+parseIcarusRole = case _ of
+  Just "external" -> Bootstrap.IcarusExternal
+  Just "internal" -> Bootstrap.IcarusInternal
+  Just other -> unsafeCrashWith ("Unsupported Icarus role: " <> other)
+  Nothing -> unsafeCrashWith "Missing Icarus role"
 
 assertScriptHashVector :: ScriptHashVector -> Effect Unit
 assertScriptHashVector vector = do
