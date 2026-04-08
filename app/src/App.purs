@@ -12,7 +12,7 @@ import Cardano.Address.Signing as Signing
 import Cardano.Address.Script as Script
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Cardano.Mnemonic as Mnemonic
-import Data.Array (filter, length, mapWithIndex, uncons)
+import Data.Array (filter, length, mapWithIndex, reverse, uncons)
 import Data.Either (Either(..))
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
@@ -109,7 +109,9 @@ data Action
   | SaveRestorePhraseToVault
   | SaveSigningKeyToVault
   | UseVaultEntryInRestore String
+  | PopVaultEntryInRestore String
   | UseVaultEntryInSigning String
+  | PopVaultEntryInSigning String
   | DeleteVaultEntry String
 
 type State =
@@ -539,6 +541,17 @@ handleAction = case _ of
       Just entry ->
         H.modify_ _ { derivationInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Restore.") }
           *> refreshDerivation
+  PopVaultEntryInRestore entryId -> do
+    state <- H.get
+    case lookupVaultEntry entryId state.vaultEntries of
+      Nothing ->
+        H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
+      Just entry -> do
+        let
+          nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
+        persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
+        H.modify_ _ { derivationInput = entry.value }
+        refreshDerivation
   UseVaultEntryInSigning entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
@@ -547,6 +560,17 @@ handleAction = case _ of
       Just entry ->
         H.modify_ _ { signingKeyInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Signing.") }
           *> refreshSigning
+  PopVaultEntryInSigning entryId -> do
+    state <- H.get
+    case lookupVaultEntry entryId state.vaultEntries of
+      Nothing ->
+        H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
+      Just entry -> do
+        let
+          nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
+        persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
+        H.modify_ _ { signingKeyInput = entry.value }
+        refreshSigning
   DeleteVaultEntry entryId ->
     do
       state <- H.get
@@ -1359,7 +1383,7 @@ renderVaultPage state =
     [ sectionCard
         "Encrypted vault"
         [ HH.p_
-            [ HH.text "Create or unlock an encrypted vault file. Secrets stay in memory while unlocked and are only persisted to disk as encrypted JSON." ]
+            [ HH.text "Create or unlock an encrypted vault file. The vault behaves like a typed clipboard stack: push secrets in, peek or pop them out, and keep the encrypted file as the shared source across tools." ]
         , HH.label
             [ HP.class_ (HH.ClassName "field-group") ]
             [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault passphrase" ]
@@ -1434,7 +1458,7 @@ renderVaultPage state =
         , renderVaultInlineStatus state
         ]
     , sectionCard
-        "Unlocked entries"
+        "Clipboard stack"
         [ renderVaultEntries state ]
     ]
 
@@ -2395,7 +2419,7 @@ renderVaultInlineStatus state = case state.vaultErrorMessage, state.vaultStatusM
 renderVaultMnemonicShelf :: forall w. State -> HH.HTML w Action
 renderVaultMnemonicShelf state =
   let
-    entries = mnemonicVaultEntries state.vaultEntries
+    entries = stackEntries (mnemonicVaultEntries state.vaultEntries)
   in
     if not state.vaultUnlocked then
       HH.div
@@ -2413,7 +2437,7 @@ renderVaultMnemonicShelf state =
 renderVaultSigningShelf :: forall w. State -> HH.HTML w Action
 renderVaultSigningShelf state =
   let
-    entries = signingKeyVaultEntries state.vaultEntries
+    entries = stackEntries (signingKeyVaultEntries state.vaultEntries)
   in
     if not state.vaultUnlocked then
       HH.div
@@ -2441,7 +2465,7 @@ renderVaultEntries state =
   else
     HH.div
       [ HP.class_ (HH.ClassName "derivation-result") ]
-      (map renderVaultEntryCard state.vaultEntries)
+      (map renderVaultEntryCard (stackEntries state.vaultEntries))
 
 renderVaultEntryCard :: forall w. Vault.VaultEntry -> HH.HTML w Action
 renderVaultEntryCard entry =
@@ -2473,11 +2497,19 @@ renderRestoreVaultEntry entry =
         [ HH.strong_ [ HH.text entry.label ]
         , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
         ]
-    , HH.button
-        [ HP.class_ (HH.ClassName "secondary-btn")
-        , HE.onClick \_ -> UseVaultEntryInRestore entry.id
+    , HH.div
+        [ HP.class_ (HH.ClassName "output-actions") ]
+        [ HH.button
+            [ HP.class_ (HH.ClassName "secondary-btn")
+            , HE.onClick \_ -> UseVaultEntryInRestore entry.id
+            ]
+            [ HH.text "Peek" ]
+        , HH.button
+            [ HP.class_ (HH.ClassName "secondary-btn")
+            , HE.onClick \_ -> PopVaultEntryInRestore entry.id
+            ]
+            [ HH.text "Pop" ]
         ]
-        [ HH.text "Use in Restore" ]
     ]
 
 renderSigningVaultEntry :: forall w. Vault.VaultEntry -> HH.HTML w Action
@@ -2488,11 +2520,19 @@ renderSigningVaultEntry entry =
         [ HH.strong_ [ HH.text entry.label ]
         , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
         ]
-    , HH.button
-        [ HP.class_ (HH.ClassName "secondary-btn")
-        , HE.onClick \_ -> UseVaultEntryInSigning entry.id
+    , HH.div
+        [ HP.class_ (HH.ClassName "output-actions") ]
+        [ HH.button
+            [ HP.class_ (HH.ClassName "secondary-btn")
+            , HE.onClick \_ -> UseVaultEntryInSigning entry.id
+            ]
+            [ HH.text "Peek" ]
+        , HH.button
+            [ HP.class_ (HH.ClassName "secondary-btn")
+            , HE.onClick \_ -> PopVaultEntryInSigning entry.id
+            ]
+            [ HH.text "Pop" ]
         ]
-        [ HH.text "Use in Signing" ]
     ]
 
 lookupVaultEntry :: String -> Array Vault.VaultEntry -> Maybe Vault.VaultEntry
@@ -2518,6 +2558,9 @@ normalizedEntryLabel customLabel fallbackLabel =
     trimmed = String.trim customLabel
   in
     if trimmed == "" then fallbackLabel else trimmed
+
+stackEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
+stackEntries = reverse
 
 normalizedVaultFileName :: String -> String
 normalizedVaultFileName fileName =
