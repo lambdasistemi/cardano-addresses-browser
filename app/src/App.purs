@@ -571,38 +571,50 @@ handleAction = case _ of
       Nothing ->
         H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
       Just entry ->
-        H.modify_ _ { derivationInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Restore.") }
-          *> refreshDerivation
+        if not (acceptsVaultEntry restoreAcceptedKinds entry) then
+          H.modify_ _ { vaultErrorMessage = Just "Selected vault entry is not compatible with Restore.", vaultStatusMessage = Nothing }
+        else
+          H.modify_ _ { derivationInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Restore.") }
+            *> refreshDerivation
   PopVaultEntryInRestore entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
       Nothing ->
         H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
       Just entry -> do
-        let
-          nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
-        persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
-        H.modify_ _ { derivationInput = entry.value }
-        refreshDerivation
+        if not (acceptsVaultEntry restoreAcceptedKinds entry) then
+          H.modify_ _ { vaultErrorMessage = Just "Selected vault entry is not compatible with Restore.", vaultStatusMessage = Nothing }
+        else do
+          let
+            nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
+          persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
+          H.modify_ _ { derivationInput = entry.value }
+          refreshDerivation
   UseVaultEntryInSigning entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
       Nothing ->
         H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
       Just entry ->
-        H.modify_ _ { signingKeyInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Signing.") }
-          *> refreshSigning
+        if not (acceptsVaultEntry signingAcceptedKinds entry) then
+          H.modify_ _ { vaultErrorMessage = Just "Selected vault entry is not compatible with Signing.", vaultStatusMessage = Nothing }
+        else
+          H.modify_ _ { signingKeyInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Signing.") }
+            *> refreshSigning
   PopVaultEntryInSigning entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
       Nothing ->
         H.modify_ _ { vaultErrorMessage = Just "Selected vault entry was not found.", vaultStatusMessage = Nothing }
       Just entry -> do
-        let
-          nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
-        persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
-        H.modify_ _ { signingKeyInput = entry.value }
-        refreshSigning
+        if not (acceptsVaultEntry signingAcceptedKinds entry) then
+          H.modify_ _ { vaultErrorMessage = Just "Selected vault entry is not compatible with Signing.", vaultStatusMessage = Nothing }
+        else do
+          let
+            nextEntries = filter (\candidate -> candidate.id /= entryId) state.vaultEntries
+          persistVaultEntries nextEntries ("Popped " <> entry.label <> " from the vault stack.")
+          H.modify_ _ { signingKeyInput = entry.value }
+          refreshSigning
   DeleteVaultEntry entryId ->
     do
       state <- H.get
@@ -2508,7 +2520,7 @@ renderVaultInlineStatus state = case state.vaultErrorMessage, state.vaultStatusM
 renderVaultMnemonicShelf :: forall w. State -> HH.HTML w Action
 renderVaultMnemonicShelf state =
   let
-    entries = stackEntries (mnemonicVaultEntries state.vaultEntries)
+    entries = stackEntries (vaultEntriesForKinds restoreAcceptedKinds state.vaultEntries)
   in
     if not state.vaultUnlocked then
       HH.div
@@ -2519,14 +2531,17 @@ renderVaultMnemonicShelf state =
         [ HP.class_ (HH.ClassName "privacy-note") ]
         [ HH.p_ [ HH.text "No mnemonic entries in the unlocked vault yet." ] ]
     else
-      HH.div
-        [ HP.class_ (HH.ClassName "vault-shelf") ]
-        (map renderRestoreVaultEntry entries)
+      HH.div_
+        [ renderVaultAcceptanceNote "Accepts" restoreAcceptedKinds
+        , HH.div
+            [ HP.class_ (HH.ClassName "vault-shelf") ]
+            (map renderRestoreVaultEntry entries)
+        ]
 
 renderVaultSigningShelf :: forall w. State -> HH.HTML w Action
 renderVaultSigningShelf state =
   let
-    entries = stackEntries (signingKeyVaultEntries state.vaultEntries)
+    entries = stackEntries (vaultEntriesForKinds signingAcceptedKinds state.vaultEntries)
   in
     if not state.vaultUnlocked then
       HH.div
@@ -2537,9 +2552,12 @@ renderVaultSigningShelf state =
         [ HP.class_ (HH.ClassName "privacy-note") ]
         [ HH.p_ [ HH.text "No signing-key entries in the unlocked vault yet." ] ]
     else
-      HH.div
-        [ HP.class_ (HH.ClassName "vault-shelf") ]
-        (map renderSigningVaultEntry entries)
+      HH.div_
+        [ renderVaultAcceptanceNote "Accepts" signingAcceptedKinds
+        , HH.div
+            [ HP.class_ (HH.ClassName "vault-shelf") ]
+            (map renderSigningVaultEntry entries)
+        ]
 
 renderVaultEntries :: forall w. State -> HH.HTML w Action
 renderVaultEntries state =
@@ -2584,6 +2602,7 @@ renderRestoreVaultEntry entry =
     [ HP.class_ (HH.ClassName "vault-entry") ]
     [ HH.div_
         [ HH.strong_ [ HH.text entry.label ]
+        , HH.p [ HP.class_ (HH.ClassName "sidebar-kicker") ] [ HH.text (vaultEntryKindLabel entry.kind) ]
         , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
         ]
     , HH.div
@@ -2607,6 +2626,7 @@ renderSigningVaultEntry entry =
     [ HP.class_ (HH.ClassName "vault-entry") ]
     [ HH.div_
         [ HH.strong_ [ HH.text entry.label ]
+        , HH.p [ HP.class_ (HH.ClassName "sidebar-kicker") ] [ HH.text (vaultEntryKindLabel entry.kind) ]
         , HH.p [ HP.class_ (HH.ClassName "sidebar-copy") ] [ HH.text entry.createdAt ]
         ]
     , HH.div
@@ -2629,17 +2649,35 @@ lookupVaultEntry entryId entries = case uncons (filter (\entry -> entry.id == en
   Nothing -> Nothing
   Just { head } -> Just head
 
-mnemonicVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
-mnemonicVaultEntries = filter (\entry -> entry.kind == Vault.kindTag Vault.VaultMnemonic)
+type VaultKindTag = String
 
-signingKeyVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
-signingKeyVaultEntries =
-  filter
-    ( \entry ->
-        entry.kind == Vault.kindTag Vault.VaultSigningKey
-          || entry.kind == Vault.kindTag Vault.VaultAddressPrivateKey
-          || entry.kind == Vault.kindTag Vault.VaultStakePrivateKey
-    )
+restoreAcceptedKinds :: Array VaultKindTag
+restoreAcceptedKinds =
+  [ Vault.kindTag Vault.VaultMnemonic
+  ]
+
+signingAcceptedKinds :: Array VaultKindTag
+signingAcceptedKinds =
+  [ Vault.kindTag Vault.VaultSigningKey
+  , Vault.kindTag Vault.VaultAddressPrivateKey
+  , Vault.kindTag Vault.VaultStakePrivateKey
+  ]
+
+vaultEntriesForKinds :: Array VaultKindTag -> Array Vault.VaultEntry -> Array Vault.VaultEntry
+vaultEntriesForKinds acceptedKinds =
+  filter (acceptsVaultEntry acceptedKinds)
+
+acceptsVaultEntry :: Array VaultKindTag -> Vault.VaultEntry -> Boolean
+acceptsVaultEntry acceptedKinds entry =
+  length (filter (_ == entry.kind) acceptedKinds) > 0
+
+renderVaultAcceptanceNote :: forall w. String -> Array VaultKindTag -> HH.HTML w Action
+renderVaultAcceptanceNote prefix acceptedKinds =
+  HH.div
+    [ HP.class_ (HH.ClassName "privacy-note") ]
+    [ HH.p_
+        [ HH.text (prefix <> ": " <> joinWith ", " (map vaultEntryKindLabel acceptedKinds)) ]
+    ]
 
 vaultEntryKindLabel :: String -> String
 vaultEntryKindLabel kind
