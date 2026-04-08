@@ -95,9 +95,7 @@ data Action
   | SetScriptInputMode ScriptInputMode
   | SetScriptInput String
   | SetVaultPassphraseInput String
-  | SetVaultPassphraseConfirmInput String
   | ToggleVaultPassphraseVisibility
-  | SetVaultFileNameInput String
   | SetMnemonicVaultLabelInput String
   | SetRestoreVaultLabelInput String
   | SetSigningVaultLabelInput String
@@ -160,9 +158,7 @@ type State =
   , scriptAnalysisResult :: Maybe (Either String Script.ScriptAnalysis)
   , scriptTemplateAnalysisResult :: Maybe (Either String Script.ScriptTemplateAnalysis)
   , vaultPassphraseInput :: String
-  , vaultPassphraseConfirmInput :: String
   , showVaultPassphrase :: Boolean
-  , vaultFileNameInput :: String
   , mnemonicVaultLabelInput :: String
   , restoreVaultLabelInput :: String
   , signingVaultLabelInput :: String
@@ -216,9 +212,7 @@ initialState =
   , scriptAnalysisResult: Nothing
   , scriptTemplateAnalysisResult: Nothing
   , vaultPassphraseInput: ""
-  , vaultPassphraseConfirmInput: ""
   , showVaultPassphrase: false
-  , vaultFileNameInput: "cardano-addresses.vault.json"
   , mnemonicVaultLabelInput: ""
   , restoreVaultLabelInput: ""
   , signingVaultLabelInput: ""
@@ -423,12 +417,8 @@ handleAction = case _ of
         }
   SetVaultPassphraseInput value ->
     H.modify_ _ { vaultPassphraseInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
-  SetVaultPassphraseConfirmInput value ->
-    H.modify_ _ { vaultPassphraseConfirmInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
   ToggleVaultPassphraseVisibility ->
     H.modify_ \state -> state { showVaultPassphrase = not state.showVaultPassphrase }
-  SetVaultFileNameInput value ->
-    H.modify_ _ { vaultFileNameInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
   SetMnemonicVaultLabelInput value ->
     H.modify_ _ { mnemonicVaultLabelInput = value, vaultErrorMessage = Nothing, vaultStatusMessage = Nothing }
   SetRestoreVaultLabelInput value ->
@@ -439,11 +429,9 @@ handleAction = case _ of
     state <- H.get
     if String.trim state.vaultPassphraseInput == "" then
       H.modify_ _ { vaultErrorMessage = Just "Enter a vault passphrase before creating a vault.", vaultStatusMessage = Nothing }
-    else if state.vaultPassphraseInput /= state.vaultPassphraseConfirmInput then
-      H.modify_ _ { vaultErrorMessage = Just "Vault passphrase confirmation does not match.", vaultStatusMessage = Nothing }
     else do
       let
-        fileName = normalizedVaultFileName state.vaultFileNameInput
+        fileName = defaultVaultFileName
       result <- liftAff (try (Vault.createVaultFile fileName state.vaultPassphraseInput []))
       case result of
         Left err ->
@@ -452,10 +440,9 @@ handleAction = case _ of
           H.modify_ _
             { vaultUnlocked = true
             , vaultEntries = []
-            , vaultFileNameInput = persistedFileName
             , vaultDirty = false
             , vaultErrorMessage = Nothing
-            , vaultStatusMessage = Just ("Created and persisted encrypted vault " <> persistedFileName <> ".")
+            , vaultStatusMessage = Just ("Created encrypted vault " <> persistedFileName <> ".")
             }
   ImportVault -> do
     state <- H.get
@@ -473,32 +460,28 @@ handleAction = case _ of
             H.modify_ _
               { vaultUnlocked = true
               , vaultEntries = imported.entries
-              , vaultFileNameInput = imported.fileName
               , vaultDirty = false
               , vaultErrorMessage = Nothing
-              , vaultStatusMessage = Just ("Unlocked vault " <> imported.fileName <> ".")
+              , vaultStatusMessage = Just ("Opened encrypted vault " <> imported.fileName <> ".")
               }
   ExportVault -> do
     state <- H.get
     if not state.vaultUnlocked then
-      H.modify_ _ { vaultErrorMessage = Just "Create or unlock a vault before exporting it.", vaultStatusMessage = Nothing }
+      H.modify_ _ { vaultErrorMessage = Just "Create or open the vault before downloading a backup.", vaultStatusMessage = Nothing }
     else if String.trim state.vaultPassphraseInput == "" then
-      H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before exporting the vault file.", vaultStatusMessage = Nothing }
-    else if state.vaultPassphraseInput /= state.vaultPassphraseConfirmInput then
-      H.modify_ _ { vaultErrorMessage = Just "Vault passphrase confirmation does not match.", vaultStatusMessage = Nothing }
+      H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before downloading the encrypted backup.", vaultStatusMessage = Nothing }
     else do
       let
-        fileName = normalizedVaultFileName state.vaultFileNameInput
+        fileName = defaultVaultFileName
       result <- liftAff (try (Vault.exportVaultFile fileName state.vaultPassphraseInput state.vaultEntries))
       case result of
         Left err ->
           H.modify_ _ { vaultErrorMessage = Just ("Vault export failed: " <> message err), vaultStatusMessage = Nothing }
         Right _ ->
           H.modify_ _
-            { vaultFileNameInput = fileName
-            , vaultDirty = false
+            { vaultDirty = false
             , vaultErrorMessage = Nothing
-            , vaultStatusMessage = Just ("Encrypted vault exported as " <> fileName <> ".")
+            , vaultStatusMessage = Just ("Downloaded encrypted vault backup " <> fileName <> ".")
             }
   LockVault ->
     H.modify_ _
@@ -638,26 +621,26 @@ persistVaultEntries entries successMessage = do
     H.modify_ _ { vaultErrorMessage = Just "Unlock or create a vault before saving secrets into it.", vaultStatusMessage = Nothing }
   else if String.trim state.vaultPassphraseInput == "" then
     H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before saving changes.", vaultStatusMessage = Nothing }
-  else do
-    let
-      fileName = normalizedVaultFileName state.vaultFileNameInput
-    result <- liftAff (try (Vault.persistVaultFile fileName state.vaultPassphraseInput entries))
-    case result of
-      Left err ->
-        H.modify_ _
-          { vaultEntries = entries
-          , vaultDirty = true
-          , vaultErrorMessage = Just ("Vault save failed: " <> message err)
-          , vaultStatusMessage = Nothing
-          }
-      Right persistedFileName ->
-        H.modify_ _
-          { vaultEntries = entries
-          , vaultFileNameInput = persistedFileName
-          , vaultDirty = false
-          , vaultErrorMessage = Nothing
-          , vaultStatusMessage = Just successMessage
-          }
+  else
+    do
+      let
+        fileName = defaultVaultFileName
+      result <- liftAff (try (Vault.persistVaultFile fileName state.vaultPassphraseInput entries))
+      case result of
+        Left err ->
+          H.modify_ _
+            { vaultEntries = entries
+            , vaultDirty = true
+            , vaultErrorMessage = Just ("Vault save failed: " <> message err)
+            , vaultStatusMessage = Nothing
+            }
+        Right _ ->
+          H.modify_ _
+            { vaultEntries = entries
+            , vaultDirty = false
+            , vaultErrorMessage = Nothing
+            , vaultStatusMessage = Just successMessage
+            }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -1427,7 +1410,7 @@ renderVaultPage state =
     [ sectionCard
         "Encrypted vault"
         [ HH.p_
-            [ HH.text "Create or unlock an encrypted vault file. The vault behaves like a typed clipboard stack: push secrets in, peek or pop them out, and keep the encrypted file as the shared source across tools." ]
+            [ HH.text "Use one encrypted vault as the shared secret stack for the app. Open it with the passphrase, push material from tools, then peek or pop compatible entries where you need them." ]
         , HH.label
             [ HP.class_ (HH.ClassName "field-group") ]
             [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault passphrase" ]
@@ -1437,27 +1420,6 @@ renderVaultPage state =
                 , HP.placeholder "Strong passphrase for the vault file"
                 , HP.value state.vaultPassphraseInput
                 , HE.onValueInput SetVaultPassphraseInput
-                ]
-            ]
-        , HH.label
-            [ HP.class_ (HH.ClassName "field-group") ]
-            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Repeat passphrase" ]
-            , HH.input
-                [ HP.class_ (HH.ClassName "text-input derivation-secret-input")
-                , HP.type_ (if state.showVaultPassphrase then HP.InputText else HP.InputPassword)
-                , HP.placeholder "Repeat the vault passphrase"
-                , HP.value state.vaultPassphraseConfirmInput
-                , HE.onValueInput SetVaultPassphraseConfirmInput
-                ]
-            ]
-        , HH.label
-            [ HP.class_ (HH.ClassName "field-group") ]
-            [ HH.span [ HP.class_ (HH.ClassName "field-label") ] [ HH.text "Vault file name" ]
-            , HH.input
-                [ HP.class_ (HH.ClassName "inline-input")
-                , HP.placeholder "cardano-addresses.vault.json"
-                , HP.value state.vaultFileNameInput
-                , HE.onValueInput SetVaultFileNameInput
                 ]
             ]
         , HH.div
@@ -1476,13 +1438,13 @@ renderVaultPage state =
                 [ HP.class_ (HH.ClassName "secondary-btn")
                 , HE.onClick \_ -> ImportVault
                 ]
-                [ HH.text "Import vault file" ]
+                [ HH.text "Open vault" ]
             , HH.button
                 [ HP.class_ (HH.ClassName "secondary-btn")
                 , HP.disabled (not state.vaultUnlocked)
                 , HE.onClick \_ -> ExportVault
                 ]
-                [ HH.text "Export vault file" ]
+                [ HH.text "Download backup" ]
             , HH.button
                 [ HP.class_ (HH.ClassName "secondary-btn")
                 , HP.disabled (not state.vaultUnlocked)
@@ -1490,15 +1452,10 @@ renderVaultPage state =
                 ]
                 [ HH.text "Lock vault" ]
             ]
-        , if state.vaultDirty then
-            HH.div
-              [ HP.class_ (HH.ClassName "result-error") ]
-              [ HH.text "Vault entries are only in memory right now. Export the vault file before locking or leaving this page." ]
-          else
-            HH.text ""
         , keyValue "State" (vaultStateLabel state)
         , keyValue "Entries" (show (length state.vaultEntries))
-        , keyValue "Persisted" (if state.vaultDirty then "No, export required" else "Yes or unchanged")
+        , keyValue "Vault file" defaultVaultFileName
+        , keyValue "Persisted" (if state.vaultDirty then "No, write failed" else "Yes")
         , renderVaultInlineStatus state
         ]
     , sectionCard
@@ -2722,12 +2679,8 @@ rolePathLabel role = case role of
   Derivation.UTxOInternal -> "internal"
   Derivation.Stake -> "stake"
 
-normalizedVaultFileName :: String -> String
-normalizedVaultFileName fileName =
-  let
-    trimmed = String.trim fileName
-  in
-    if trimmed == "" then "cardano-addresses.vault.json" else trimmed
+defaultVaultFileName :: String
+defaultVaultFileName = "cardano-addresses.vault.json"
 
 vaultStateLabel :: State -> String
 vaultStateLabel state
