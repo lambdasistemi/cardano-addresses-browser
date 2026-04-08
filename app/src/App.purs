@@ -108,6 +108,10 @@ data Action
   | SaveGeneratedMnemonicToVault
   | SaveRestorePhraseToVault
   | SaveSigningKeyToVault
+  | SaveShelleyRootKeyToVault
+  | SaveShelleyAccountKeyToVault
+  | SaveShelleyAddressKeyToVault
+  | SaveShelleyStakeKeyToVault
   | UseVaultEntryInRestore String
   | PopVaultEntryInRestore String
   | UseVaultEntryInSigning String
@@ -533,6 +537,34 @@ handleAction = case _ of
       H.modify_ _ { vaultErrorMessage = Just "Paste a signing key before saving it to the vault.", vaultStatusMessage = Nothing }
     else
       saveVaultEntry Vault.VaultSigningKey (normalizedEntryLabel state.signingVaultLabelInput "Signing key") key
+  SaveShelleyRootKeyToVault -> do
+    state <- H.get
+    case state.derivationResult of
+      Just (Right keys) ->
+        saveVaultEntry Vault.VaultRootPrivateKey (shelleyRootKeyLabel state) keys.rootKeyBech32
+      _ ->
+        H.modify_ _ { vaultErrorMessage = Just "Derive Shelley keys before saving the root key to the vault.", vaultStatusMessage = Nothing }
+  SaveShelleyAccountKeyToVault -> do
+    state <- H.get
+    case state.derivationResult of
+      Just (Right keys) ->
+        saveVaultEntry Vault.VaultAccountPrivateKey (shelleyAccountKeyLabel state) keys.accountKeyBech32
+      _ ->
+        H.modify_ _ { vaultErrorMessage = Just "Derive Shelley keys before saving the account key to the vault.", vaultStatusMessage = Nothing }
+  SaveShelleyAddressKeyToVault -> do
+    state <- H.get
+    case state.derivationResult of
+      Just (Right keys) ->
+        saveVaultEntry Vault.VaultAddressPrivateKey (shelleyAddressKeyLabel state) keys.addressKeyBech32
+      _ ->
+        H.modify_ _ { vaultErrorMessage = Just "Derive Shelley keys before saving the address key to the vault.", vaultStatusMessage = Nothing }
+  SaveShelleyStakeKeyToVault -> do
+    state <- H.get
+    case state.derivationResult of
+      Just (Right keys) ->
+        saveVaultEntry Vault.VaultStakePrivateKey (shelleyStakeKeyLabel state) keys.stakeKeyBech32
+      _ ->
+        H.modify_ _ { vaultErrorMessage = Just "Derive Shelley keys before saving the stake key to the vault.", vaultStatusMessage = Nothing }
   UseVaultEntryInRestore entryId -> do
     state <- H.get
     case lookupVaultEntry entryId state.vaultEntries of
@@ -2155,14 +2187,71 @@ renderShelleyRestoreResult showPrivateKeys previousKeys derivationResult shelley
                     ]
                     [ HH.text (if showPrivateKeys then "Hide private keys" else "Show private keys") ]
                 ]
-            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.rootKeyBech32 keys) "Root private key" keys.rootKeyBech32
-            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.accountKeyBech32 keys) "Account private key" keys.accountKeyBech32
-            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.addressKeyBech32 keys) "Address private key" keys.addressKeyBech32
+            , renderDerivedSecretValueWithVaultAction
+                showPrivateKeys
+                (hasChanged previousKeys _.rootKeyBech32 keys)
+                "Root private key"
+                keys.rootKeyBech32
+                "Push to stack"
+                SaveShelleyRootKeyToVault
+            , renderDerivedSecretValueWithVaultAction
+                showPrivateKeys
+                (hasChanged previousKeys _.accountKeyBech32 keys)
+                "Account private key"
+                keys.accountKeyBech32
+                "Push to stack"
+                SaveShelleyAccountKeyToVault
+            , renderDerivedSecretValueWithVaultAction
+                showPrivateKeys
+                (hasChanged previousKeys _.addressKeyBech32 keys)
+                "Address private key"
+                keys.addressKeyBech32
+                "Push to stack"
+                SaveShelleyAddressKeyToVault
             , renderDerivedPublicValue (hasChanged previousKeys _.addressPublicKeyBech32 keys) "Address public key" keys.addressPublicKeyBech32
-            , renderDerivedSecretValue showPrivateKeys (hasChanged previousKeys _.stakeKeyBech32 keys) "Stake private key" keys.stakeKeyBech32
+            , renderDerivedSecretValueWithVaultAction
+                showPrivateKeys
+                (hasChanged previousKeys _.stakeKeyBech32 keys)
+                "Stake private key"
+                keys.stakeKeyBech32
+                "Push to stack"
+                SaveShelleyStakeKeyToVault
             , renderDerivedPublicValue (hasChanged previousKeys _.stakePublicKeyBech32 keys) "Stake public key" keys.stakePublicKeyBech32
             ]
       )
+
+renderDerivedSecretValueWithVaultAction :: forall w. Boolean -> Boolean -> String -> String -> String -> Action -> HH.HTML w Action
+renderDerivedSecretValueWithVaultAction isVisible changed label value vaultActionLabel vaultAction =
+  HH.div
+    [ HP.class_ (HH.ClassName ("output-card" <> if changed then " changed" else "")) ]
+    [ HH.div
+        [ HP.class_ (HH.ClassName "output-meta") ]
+        [ HH.h4 [ HP.class_ (HH.ClassName "roadmap-title") ] [ HH.text label ]
+        , HH.div
+            [ HP.class_ (HH.ClassName "output-actions") ]
+            [ HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> vaultAction
+                ]
+                [ HH.text vaultActionLabel ]
+            , HH.button
+                [ HP.class_ (HH.ClassName "secondary-btn")
+                , HE.onClick \_ -> CopyValue value
+                ]
+                [ HH.text "Copy" ]
+            ]
+        ]
+    , if not isVisible then
+        HH.div
+          [ HP.class_ (HH.ClassName "privacy-note") ]
+          [ HH.p_ [ HH.text "Private key hidden for this card. Use Show or Copy." ] ]
+      else
+        HH.div
+          [ HP.class_ (HH.ClassName "output-value")
+          , HP.title value
+          ]
+          [ HH.text value ]
+    ]
 
 renderShelleyAddressSection
   :: forall w
@@ -2544,12 +2633,22 @@ mnemonicVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
 mnemonicVaultEntries = filter (\entry -> entry.kind == Vault.kindTag Vault.VaultMnemonic)
 
 signingKeyVaultEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
-signingKeyVaultEntries = filter (\entry -> entry.kind == Vault.kindTag Vault.VaultSigningKey)
+signingKeyVaultEntries =
+  filter
+    ( \entry ->
+        entry.kind == Vault.kindTag Vault.VaultSigningKey
+          || entry.kind == Vault.kindTag Vault.VaultAddressPrivateKey
+          || entry.kind == Vault.kindTag Vault.VaultStakePrivateKey
+    )
 
 vaultEntryKindLabel :: String -> String
 vaultEntryKindLabel kind
   | kind == Vault.kindTag Vault.VaultMnemonic = Vault.labelForKind Vault.VaultMnemonic
   | kind == Vault.kindTag Vault.VaultSigningKey = Vault.labelForKind Vault.VaultSigningKey
+  | kind == Vault.kindTag Vault.VaultRootPrivateKey = Vault.labelForKind Vault.VaultRootPrivateKey
+  | kind == Vault.kindTag Vault.VaultAccountPrivateKey = Vault.labelForKind Vault.VaultAccountPrivateKey
+  | kind == Vault.kindTag Vault.VaultAddressPrivateKey = Vault.labelForKind Vault.VaultAddressPrivateKey
+  | kind == Vault.kindTag Vault.VaultStakePrivateKey = Vault.labelForKind Vault.VaultStakePrivateKey
   | otherwise = kind
 
 normalizedEntryLabel :: String -> String -> String
@@ -2561,6 +2660,29 @@ normalizedEntryLabel customLabel fallbackLabel =
 
 stackEntries :: Array Vault.VaultEntry -> Array Vault.VaultEntry
 stackEntries = reverse
+
+shelleyRootKeyLabel :: State -> String
+shelleyRootKeyLabel _ = "Shelley root private key"
+
+shelleyAccountKeyLabel :: State -> String
+shelleyAccountKeyLabel state = "Shelley account " <> normalizeIndexInput state.accountIndexInput <> " private key"
+
+shelleyAddressKeyLabel :: State -> String
+shelleyAddressKeyLabel state =
+  "Shelley "
+    <> rolePathLabel state.derivationRole
+    <> " address "
+    <> normalizeIndexInput state.addressIndexInput
+    <> " private key"
+
+shelleyStakeKeyLabel :: State -> String
+shelleyStakeKeyLabel state = "Shelley account " <> normalizeIndexInput state.accountIndexInput <> " stake private key"
+
+rolePathLabel :: Derivation.Role -> String
+rolePathLabel role = case role of
+  Derivation.UTxOExternal -> "external"
+  Derivation.UTxOInternal -> "internal"
+  Derivation.Stake -> "stake"
 
 normalizedVaultFileName :: String -> String
 normalizedVaultFileName fileName =
