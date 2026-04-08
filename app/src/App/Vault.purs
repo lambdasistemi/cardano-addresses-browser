@@ -3,10 +3,12 @@ module App.Vault
   , VaultImportResult
   , VaultKind(..)
   , createVaultEntry
+  , createVaultFile
   , exportVaultFile
   , importVaultFile
   , kindTag
   , labelForKind
+  , persistVaultFile
   ) where
 
 import Prelude
@@ -37,18 +39,28 @@ type VaultImportResult =
 
 foreign import createVaultEntryImpl :: String -> String -> String -> Effect VaultEntry
 
+foreign import createVaultFileImpl :: String -> String -> Array VaultEntry -> Effect (Promise String)
+
 foreign import exportVaultFileImpl :: String -> String -> Array VaultEntry -> Effect (Promise Unit)
 
 foreign import importVaultFileImpl :: String -> Effect (Promise VaultImportResult)
 
+foreign import persistVaultFileImpl :: String -> String -> Array VaultEntry -> Effect (Promise String)
+
 createVaultEntry :: VaultKind -> String -> String -> Effect VaultEntry
 createVaultEntry kind label value = createVaultEntryImpl (kindTag kind) label value
+
+createVaultFile :: String -> String -> Array VaultEntry -> Aff String
+createVaultFile fileName passphrase entries = toAffE (createVaultFileImpl fileName passphrase entries)
 
 exportVaultFile :: String -> String -> Array VaultEntry -> Aff Unit
 exportVaultFile fileName passphrase entries = toAffE (exportVaultFileImpl fileName passphrase entries)
 
 importVaultFile :: String -> Aff VaultImportResult
 importVaultFile passphrase = toAffE (importVaultFileImpl passphrase)
+
+persistVaultFile :: String -> String -> Array VaultEntry -> Aff String
+persistVaultFile fileName passphrase entries = toAffE (persistVaultFileImpl fileName passphrase entries)
 
 kindTag :: VaultKind -> String
 kindTag = case _ of
