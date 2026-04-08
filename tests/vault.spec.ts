@@ -37,10 +37,15 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   await page.getByRole("button", { name: /Restore Choose family first/ }).click();
   const restoreCard = page.locator("section.card").filter({ has: page.getByText("Restore and build") });
   await expect(restoreCard.locator(".vault-entry").getByText("Paper backup", { exact: true })).toBeVisible();
-  await restoreCard.getByRole("button", { name: "Use in Restore" }).click();
+  await restoreCard
+    .locator(".vault-entry")
+    .filter({ has: page.getByText("Paper backup", { exact: true }) })
+    .getByRole("button", { name: "Peek" })
+    .click();
   await expect(
     page.locator('[placeholder="abandon abandon ... or use the generated phrase"]'),
   ).toHaveValue(/.+/);
+  await expect(restoreCard.locator(".vault-entry").getByText("Paper backup", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: /Signing Sign and verify/ }).click();
   const signCard = page.locator("section.card").filter({ has: page.getByText("Sign payload") });
@@ -50,11 +55,13 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   await signCard.getByRole("button", { name: "Save signing key to vault" }).click();
   await expect(page.getByText("Saved Ops signer into the vault.")).toBeVisible();
   await signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...").fill("");
-  await expect(signCard.locator(".vault-entry").getByText("Ops signer", { exact: true })).toBeVisible();
-  await signCard.locator(".vault-entry").filter({ has: page.getByText("Ops signer", { exact: true }) }).getByRole("button", { name: "Use in Signing" }).click();
+  const firstSigningEntry = signCard.locator(".vault-entry").first();
+  await expect(firstSigningEntry.getByText("Ops signer", { exact: true })).toBeVisible();
+  await firstSigningEntry.getByRole("button", { name: "Pop" }).click();
   await expect(signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...")).toHaveValue(
     signingVector.signingKeyBech32,
   );
+  await expect(signCard.locator(".vault-entry").getByText("Ops signer", { exact: true })).toHaveCount(0);
 });
 
 test("vault exports and reimports encrypted file contents", async ({ page }) => {
@@ -88,6 +95,6 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await fileChooser.setFiles(downloadedPath);
 
   await expect(page.locator(".kv-row").filter({ has: page.getByText("State") }).getByText("Unlocked")).toBeVisible();
-  const entriesCard = page.locator("section.card").filter({ has: page.getByText("Unlocked entries") });
+  const entriesCard = page.locator("section.card").filter({ has: page.getByText("Clipboard stack") });
   await expect(entriesCard.getByText("Importable phrase", { exact: true })).toBeVisible();
 });
