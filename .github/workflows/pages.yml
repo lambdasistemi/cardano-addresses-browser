@@ -29,11 +29,8 @@ jobs:
           name: paolino
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Install dependencies
-        run: nix develop -c npm ci
-
       - name: Build app bundle
-        run: nix develop -c just bundle
+        run: nix build .#web-dist --out-link result-dist
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -41,7 +38,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: result-dist
 
   deploy:
     needs: build

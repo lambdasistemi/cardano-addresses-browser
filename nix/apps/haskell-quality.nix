@@ -1,6 +1,6 @@
 {lib}:
 
-lib.mkCiApp {
+lib.mkCheckApp {
   name = "cardano-addresses-browser-ci-haskell-quality";
-  command = "just haskell-quality";
+  checkName = "haskell-quality";
 }

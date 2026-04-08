@@ -1,7 +1,6 @@
 {lib}:
 
-lib.mkCiApp {
+lib.mkCheckApp {
   name = "cardano-addresses-browser-ci-playwright";
-  command = "just test-playwright";
-  withPlaywright = true;
+  checkName = "playwright";
 }

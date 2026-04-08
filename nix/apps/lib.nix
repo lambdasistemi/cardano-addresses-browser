@@ -1,41 +1,19 @@
-{pkgs, playwrightBrowsers, repoRoot}:
+{ pkgs, system }:
 
 let
-  commonInputs = [
-    pkgs.bash
-    pkgs.cabal-install
-    pkgs.diffutils
-    pkgs.esbuild
-    pkgs.fourmolu
-    pkgs.hlint
-    pkgs.just
-    pkgs.nix
-    pkgs.nodejs_22
-    pkgs.playwright-test
-    pkgs.purs
-    pkgs.purescript-language-server
-    pkgs.purs-backend-es
-    pkgs.purs-tidy
-    pkgs.spago
-  ];
-
-  mkCiApp =
+  mkCheckApp =
     {
       name,
-      command,
-      runtimeInputs ? commonInputs,
-      withPlaywright ? false,
+      checkName,
     }:
     let
       script = pkgs.writeShellApplication {
-        inherit name runtimeInputs;
+        inherit name;
+        runtimeInputs = [
+          pkgs.nix
+        ];
         text = ''
-          export NIX_CONFIG="experimental-features = nix-command flakes"
-          ${if withPlaywright then ''
-            export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
-            export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-          '' else ""}
-          ${command}
+          nix build ".#checks.${system}.${checkName}"
         '';
       };
     in
@@ -46,5 +24,5 @@ let
     };
 in
 {
-  inherit commonInputs mkCiApp;
+  inherit mkCheckApp;
 }
