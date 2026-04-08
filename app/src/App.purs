@@ -2507,7 +2507,7 @@ renderVaultSigningShelf state =
     else if length entries == 0 then
       HH.div
         [ HP.class_ (HH.ClassName "privacy-note") ]
-        [ HH.p_ [ HH.text "No signing-key entries in the unlocked vault yet." ] ]
+        [ HH.p_ [ HH.text "No signing-compatible entries in the unlocked vault yet. Push a root, account, address, stake, or explicit signing key into the stack." ] ]
     else
       HH.div_
         [ renderVaultAcceptanceNote "Accepts" signingAcceptedKinds
@@ -2616,6 +2616,8 @@ restoreAcceptedKinds =
 signingAcceptedKinds :: Array VaultKindTag
 signingAcceptedKinds =
   [ Vault.kindTag Vault.VaultSigningKey
+  , Vault.kindTag Vault.VaultRootPrivateKey
+  , Vault.kindTag Vault.VaultAccountPrivateKey
   , Vault.kindTag Vault.VaultAddressPrivateKey
   , Vault.kindTag Vault.VaultStakePrivateKey
   ]
