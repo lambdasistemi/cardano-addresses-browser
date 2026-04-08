@@ -20,5 +20,20 @@ jobs:
           name: paolino
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Run flake checks
-        run: nix flake check --print-build-logs
+      - name: Check formatting
+        run: nix run .#ci-check
+
+      - name: Check Haskell quality
+        run: nix run .#ci-haskell-quality
+
+      - name: Check vectors
+        run: nix run .#ci-check-vectors
+
+      - name: Build app
+        run: nix run .#ci-build
+
+      - name: Run PureScript tests
+        run: nix run .#ci-test
+
+      - name: Run Playwright UI tests
+        run: nix run .#ci-playwright
