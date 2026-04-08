@@ -1,5 +1,6 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+let currentVaultHandle = null;
 
 const PBKDF2_ITERATIONS = 250000;
 const SALT_BYTES = 16;
@@ -149,6 +150,34 @@ const readTextFileWithPicker = () =>
     input.click();
   });
 
+const downloadVaultDocument = (fileName, content) => {
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+};
+
+const filePickerTypes = [
+  {
+    description: "Encrypted vault JSON",
+    accept: {
+      "application/json": [".json"],
+    },
+  },
+];
+
+const writeVaultWithHandle = async (handle, content) => {
+  const writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+};
+
 export const createVaultEntryImpl = (kind) => (label) => (value) => () => ({
   id: crypto.randomUUID(),
   kind,
@@ -157,22 +186,57 @@ export const createVaultEntryImpl = (kind) => (label) => (value) => () => ({
   createdAt: new Date().toISOString(),
 });
 
+export const createVaultFileImpl = (fileName) => (passphrase) => (entries) => () =>
+  buildVaultDocument(passphrase, entries).then(async (content) => {
+    if (typeof window.showSaveFilePicker === "function") {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: filePickerTypes,
+      });
+      await writeVaultWithHandle(handle, content);
+      currentVaultHandle = handle;
+      return handle.name || fileName;
+    }
+
+    downloadVaultDocument(fileName, content);
+    currentVaultHandle = null;
+    return fileName;
+  });
+
 export const exportVaultFileImpl = (fileName) => (passphrase) => (entries) => () =>
   buildVaultDocument(passphrase, entries).then((content) => {
-    const blob = new Blob([content], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    downloadVaultDocument(fileName, content);
   });
 
 export const importVaultFileImpl = (passphrase) => () =>
-  readTextFileWithPicker().then(async (picked) => {
+  (typeof window.showOpenFilePicker === "function"
+    ? window
+        .showOpenFilePicker({
+          multiple: false,
+          types: filePickerTypes,
+        })
+        .then(async (handles) => {
+          const [handle] = handles ?? [];
+          if (!handle) {
+            return { canceled: true, fileName: "", content: "", handle: null };
+          }
+
+          const file = await handle.getFile();
+          const content = await file.text();
+          return {
+            canceled: false,
+            fileName: file.name,
+            content,
+            handle,
+          };
+        })
+        .catch((error) => {
+          if (error?.name === "AbortError") {
+            return { canceled: true, fileName: "", content: "", handle: null };
+          }
+          throw error;
+        })
+    : readTextFileWithPicker().then((picked) => ({ ...picked, handle: null }))).then(async (picked) => {
     if (picked.canceled) {
       return { canceled: true, fileName: "", entries: [] };
     }
@@ -228,9 +292,22 @@ export const importVaultFileImpl = (passphrase) => () =>
       throw new Error("Vault payload version is not supported.");
     }
 
+    currentVaultHandle = picked.handle ?? null;
+
     return {
       canceled: false,
       fileName: picked.fileName || "cardano-addresses.vault.json",
       entries: normalizeEntries(payload.entries ?? []),
     };
+  });
+
+export const persistVaultFileImpl = (fileName) => (passphrase) => (entries) => () =>
+  buildVaultDocument(passphrase, entries).then(async (content) => {
+    if (currentVaultHandle) {
+      await writeVaultWithHandle(currentVaultHandle, content);
+      return currentVaultHandle.name || fileName;
+    }
+
+    downloadVaultDocument(fileName, content);
+    return fileName;
   });

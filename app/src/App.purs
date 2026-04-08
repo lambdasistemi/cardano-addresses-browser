@@ -435,14 +435,22 @@ handleAction = case _ of
       H.modify_ _ { vaultErrorMessage = Just "Enter a vault passphrase before creating a vault.", vaultStatusMessage = Nothing }
     else if state.vaultPassphraseInput /= state.vaultPassphraseConfirmInput then
       H.modify_ _ { vaultErrorMessage = Just "Vault passphrase confirmation does not match.", vaultStatusMessage = Nothing }
-    else
-      H.modify_ _
-        { vaultUnlocked = true
-        , vaultEntries = []
-        , vaultDirty = true
-        , vaultErrorMessage = Nothing
-        , vaultStatusMessage = Just "New vault unlocked in memory. Export it to save the encrypted file."
-        }
+    else do
+      let
+        fileName = normalizedVaultFileName state.vaultFileNameInput
+      result <- liftAff (try (Vault.createVaultFile fileName state.vaultPassphraseInput []))
+      case result of
+        Left err ->
+          H.modify_ _ { vaultErrorMessage = Just ("Vault creation failed: " <> message err), vaultStatusMessage = Nothing }
+        Right persistedFileName ->
+          H.modify_ _
+            { vaultUnlocked = true
+            , vaultEntries = []
+            , vaultFileNameInput = persistedFileName
+            , vaultDirty = false
+            , vaultErrorMessage = Nothing
+            , vaultStatusMessage = Just ("Created and persisted encrypted vault " <> persistedFileName <> ".")
+            }
   ImportVault -> do
     state <- H.get
     if String.trim state.vaultPassphraseInput == "" then
@@ -540,13 +548,11 @@ handleAction = case _ of
         H.modify_ _ { signingKeyInput = entry.value, vaultErrorMessage = Nothing, vaultStatusMessage = Just ("Loaded " <> entry.label <> " into Signing.") }
           *> refreshSigning
   DeleteVaultEntry entryId ->
-    H.modify_ \state ->
-      state
-        { vaultEntries = filter (\entry -> entry.id /= entryId) state.vaultEntries
-        , vaultDirty = true
-        , vaultErrorMessage = Nothing
-        , vaultStatusMessage = Just "Removed entry from the unlocked vault."
-        }
+    do
+      state <- H.get
+      let
+        nextEntries = filter (\entry -> entry.id /= entryId) state.vaultEntries
+      persistVaultEntries nextEntries "Removed entry from the vault."
 
 saveVaultEntry :: forall output monad. MonadAff monad => Vault.VaultKind -> String -> String -> H.HalogenM State Action () output monad Unit
 saveVaultEntry kind label value = do
@@ -555,12 +561,35 @@ saveVaultEntry kind label value = do
     H.modify_ _ { vaultErrorMessage = Just "Unlock or create a vault before saving secrets into it.", vaultStatusMessage = Nothing }
   else do
     entry <- liftEffect (Vault.createVaultEntry kind label value)
-    H.modify_ _
-      { vaultEntries = state.vaultEntries <> [ entry ]
-      , vaultDirty = true
-      , vaultErrorMessage = Nothing
-      , vaultStatusMessage = Just ("Saved " <> entry.label <> " into the unlocked vault.")
-      }
+    persistVaultEntries (state.vaultEntries <> [ entry ]) ("Saved " <> entry.label <> " into the vault.")
+
+persistVaultEntries :: forall output monad. MonadAff monad => Array Vault.VaultEntry -> String -> H.HalogenM State Action () output monad Unit
+persistVaultEntries entries successMessage = do
+  state <- H.get
+  if not state.vaultUnlocked then
+    H.modify_ _ { vaultErrorMessage = Just "Unlock or create a vault before saving secrets into it.", vaultStatusMessage = Nothing }
+  else if String.trim state.vaultPassphraseInput == "" then
+    H.modify_ _ { vaultErrorMessage = Just "Enter the vault passphrase before saving changes.", vaultStatusMessage = Nothing }
+  else do
+    let
+      fileName = normalizedVaultFileName state.vaultFileNameInput
+    result <- liftAff (try (Vault.persistVaultFile fileName state.vaultPassphraseInput entries))
+    case result of
+      Left err ->
+        H.modify_ _
+          { vaultEntries = entries
+          , vaultDirty = true
+          , vaultErrorMessage = Just ("Vault save failed: " <> message err)
+          , vaultStatusMessage = Nothing
+          }
+      Right persistedFileName ->
+        H.modify_ _
+          { vaultEntries = entries
+          , vaultFileNameInput = persistedFileName
+          , vaultDirty = false
+          , vaultErrorMessage = Nothing
+          , vaultStatusMessage = Just successMessage
+          }
 
 refreshDerivation :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshDerivation = do
@@ -1393,6 +1422,12 @@ renderVaultPage state =
                 ]
                 [ HH.text "Lock vault" ]
             ]
+        , if state.vaultDirty then
+            HH.div
+              [ HP.class_ (HH.ClassName "result-error") ]
+              [ HH.text "Vault entries are only in memory right now. Export the vault file before locking or leaving this page." ]
+          else
+            HH.text ""
         , keyValue "State" (vaultStateLabel state)
         , keyValue "Entries" (show (length state.vaultEntries))
         , keyValue "Persisted" (if state.vaultDirty then "No, export required" else "Yes or unchanged")
