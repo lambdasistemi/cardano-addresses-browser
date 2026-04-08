@@ -24,7 +24,6 @@ test("vault stores mnemonic and signing secrets without clipboard roundtrips", a
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
   await expect(page.locator(".page-title")).toHaveText("Encrypted Vault");
   await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
-  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Show passphrase" }).click();
   await page.getByRole("button", { name: "Create vault" }).click();
   await expect(page.locator(".kv-row").filter({ has: page.getByText("State") }).getByText("Unlocked")).toBeVisible();
@@ -72,7 +71,6 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
   await expect(page.locator(".page-title")).toHaveText("Encrypted Vault");
   await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
-  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Create vault" }).click();
 
   await page.getByRole("button", { name: /Mnemonic Generate and hand off/ }).click();
@@ -92,7 +90,7 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await expect(page.locator(".kv-row").filter({ has: page.getByText("State") }).getByText("Locked")).toBeVisible();
 
   const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Import vault file" }).click();
+  await page.getByRole("button", { name: "Open vault" }).click();
   const fileChooser = await fileChooserPromise;
   await fileChooser.setFiles(downloadedPath);
 
@@ -108,7 +106,6 @@ test("vault can capture restore-derived signing keys and reuse them in signing",
 
   await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
   await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
-  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
   await page.getByRole("button", { name: "Create vault" }).click();
 
   await page.getByRole("button", { name: /Restore Choose family first/ }).click();
