@@ -20,23 +20,5 @@ jobs:
           name: paolino
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Install dependencies
-        run: nix run .#ci-install
-
-      - name: Check formatting
-        run: nix run .#ci-check
-
-      - name: Build
-        run: nix run .#ci-build
-
-      - name: Haskell quality
-        run: nix run .#ci-haskell-quality
-
-      - name: Check vectors
-        run: nix run .#ci-check-vectors
-
-      - name: Run tests
-        run: nix run .#ci-test
-
-      - name: Run Playwright UI tests
-        run: nix run .#ci-playwright
+      - name: Run flake checks
+        run: nix flake check --print-build-logs

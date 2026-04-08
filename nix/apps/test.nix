@@ -1,6 +1,6 @@
 {lib}:
 
-lib.mkCiApp {
+lib.mkCheckApp {
   name = "cardano-addresses-browser-ci-test";
-  command = "just test";
+  checkName = "test";
 }
