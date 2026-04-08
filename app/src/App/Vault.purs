@@ -20,6 +20,10 @@ import Effect.Aff (Aff)
 data VaultKind
   = VaultMnemonic
   | VaultSigningKey
+  | VaultRootPrivateKey
+  | VaultAccountPrivateKey
+  | VaultAddressPrivateKey
+  | VaultStakePrivateKey
 
 derive instance eqVaultKind :: Eq VaultKind
 
@@ -66,8 +70,16 @@ kindTag :: VaultKind -> String
 kindTag = case _ of
   VaultMnemonic -> "mnemonic"
   VaultSigningKey -> "signing-key"
+  VaultRootPrivateKey -> "root-private-key"
+  VaultAccountPrivateKey -> "account-private-key"
+  VaultAddressPrivateKey -> "address-private-key"
+  VaultStakePrivateKey -> "stake-private-key"
 
 labelForKind :: VaultKind -> String
 labelForKind = case _ of
   VaultMnemonic -> "Mnemonic"
   VaultSigningKey -> "Signing key"
+  VaultRootPrivateKey -> "Root private key"
+  VaultAccountPrivateKey -> "Account private key"
+  VaultAddressPrivateKey -> "Address private key"
+  VaultStakePrivateKey -> "Stake private key"

@@ -9,6 +9,8 @@ const fixture = JSON.parse(
 const signingVector = fixture.signingVectors.find(
   (candidate: { label: string }) => candidate.label === "message-sign-address-hex",
 );
+const restoreMnemonic =
+  "message mask aunt wheel ten maze between tomato slow analyst ladder such report capital produce";
 
 if (!signingVector) {
   throw new Error("Missing signing fixture: message-sign-address-hex");
@@ -97,4 +99,37 @@ test("vault exports and reimports encrypted file contents", async ({ page }) => 
   await expect(page.locator(".kv-row").filter({ has: page.getByText("State") }).getByText("Unlocked")).toBeVisible();
   const entriesCard = page.locator("section.card").filter({ has: page.getByText("Clipboard stack") });
   await expect(entriesCard.getByText("Importable phrase", { exact: true })).toBeVisible();
+});
+
+test("vault can capture restore-derived signing keys and reuse them in signing", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /Vault Encrypted file storage/ }).click();
+  await page.getByPlaceholder("Strong passphrase for the vault file").fill("correct horse battery staple");
+  await page.getByPlaceholder("Repeat the vault passphrase").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Create vault" }).click();
+
+  await page.getByRole("button", { name: /Restore Choose family first/ }).click();
+  const restoreInput = page.locator(
+    'input[type="password"][placeholder="abandon abandon ... or use the generated phrase"]',
+  );
+  await restoreInput.fill(restoreMnemonic);
+
+  const addressKeyCard = page
+    .locator(".output-card")
+    .filter({ has: page.getByText("Address private key", { exact: true }) });
+  await addressKeyCard.getByRole("button", { name: "Push to stack" }).click();
+  await expect(page.getByText("Saved Shelley external address 0 private key into the vault.")).toBeVisible();
+
+  await page.getByRole("button", { name: /Signing Sign and verify/ }).click();
+  const signCard = page.locator("section.card").filter({ has: page.getByText("Sign payload") });
+  const firstSigningEntry = signCard.locator(".vault-entry").first();
+  await expect(firstSigningEntry.getByText("Shelley external address 0 private key", { exact: true })).toBeVisible();
+  await firstSigningEntry.getByRole("button", { name: "Pop" }).click();
+  await expect(signCard.getByPlaceholder("addr_xsk1... or stake_xsk1...")).toHaveValue(/^addr_xsk1/);
+  await expect(
+    signCard.locator(".vault-entry").getByText("Shelley external address 0 private key", { exact: true }),
+  ).toHaveCount(0);
 });
