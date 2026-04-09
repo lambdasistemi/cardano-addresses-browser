@@ -246,8 +246,11 @@ handleAction = case _ of
     if state.inspectInput == "" then
       H.modify_ _ { inspectResult = Just (Left "Paste a Cardano address to inspect.") }
     else do
-      result <- H.liftAff (Inspect.eitherInspectAddress state.inspectInput)
-      H.modify_ _ { inspectResult = Just result }
+      outcome <- H.liftAff (try (Inspect.eitherInspectAddress state.inspectInput))
+      H.modify_ _ { inspectResult = Just case outcome of
+        Right result -> result
+        Left err -> Left (message err)
+      }
   SetMnemonicWordCount value ->
     H.modify_ _ { mnemonicWordCount = value }
   GenerateMnemonic -> do
