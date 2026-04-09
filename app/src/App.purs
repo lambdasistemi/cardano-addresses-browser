@@ -3,7 +3,6 @@ module App where
 import Prelude
 
 import App.Vault as Vault
-import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
@@ -678,8 +677,8 @@ refreshDerivation = do
           result = case selectedNetwork of
             Left err -> pure (Left err)
             Right network -> do
-              address <- Bootstrap.constructIcarusAddressFromMnemonic network words accountIndex role addressIndex
-              pure (Right (base58 address))
+              addressBase58 <- Bootstrap.constructIcarusAddressFromMnemonic network words accountIndex role addressIndex
+              pure (Right addressBase58)
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
@@ -694,8 +693,8 @@ refreshDerivation = do
           result = case selectedNetwork of
             Left err -> pure (Left err)
             Right network -> do
-              address <- Bootstrap.constructByronAddressFromMnemonic network words accountIndex addressIndex
-              pure (Right (base58 address))
+              addressBase58 <- Bootstrap.constructByronAddressFromMnemonic network words accountIndex addressIndex
+              pure (Right addressBase58)
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
@@ -739,8 +738,9 @@ refreshLegacyConstruction = do
             Left err ->
               pure (Left err)
             Right addressXPub -> case state.legacyStyle of
-              Bootstrap.LegacyIcarus ->
-                pure (Right (base58 (Bootstrap.constructIcarusAddress network addressXPub)))
+              Bootstrap.LegacyIcarus -> do
+                addressBase58 <- Bootstrap.constructIcarusAddress network addressXPub
+                pure (Right addressBase58)
               Bootstrap.LegacyByron ->
                 if String.trim state.legacyRootXPubInput == "" then
                   pure (Left "Paste the root_xvk key for Byron bootstrap addresses.")
@@ -751,12 +751,12 @@ refreshLegacyConstruction = do
                     if String.trim state.legacyDerivationPathInput == "" then
                       pure (Left "Enter a 2-segment Byron path like 0H/0.")
                     else do
-                      address <- Bootstrap.constructByronAddress
+                      addressBase58 <- Bootstrap.constructByronAddress
                         network
                         addressXPub
                         rootXPub
                         state.legacyDerivationPathInput
-                      pure (Right (base58 address))
+                      pure (Right addressBase58)
     actual <- liftAff (try result)
     H.modify_ _
       { legacyResult = Just case actual of

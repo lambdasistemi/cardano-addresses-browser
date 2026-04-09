@@ -2,7 +2,6 @@ module Test.Main where
 
 import Prelude
 
-import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
 import Cardano.Address.Inspect (eitherInspectAddress)
@@ -60,7 +59,7 @@ assertBootstrapVector vector = do
   addressXPub <- liftEffect (parseXPub vector.addressXPubBech32)
   actual <- case vector.style of
     "Icarus" ->
-      pure (Bootstrap.constructIcarusAddress (parseLegacyNetwork vector.protocolMagic) addressXPub)
+      Bootstrap.constructIcarusAddress (parseLegacyNetwork vector.protocolMagic) addressXPub
     "Byron" -> do
       rootXPub <- case vector.rootXPubBech32 of
         Just value -> liftEffect (parseXPub value)
@@ -76,7 +75,7 @@ assertBootstrapVector vector = do
     other ->
       liftEffect (throw ("Unsupported bootstrap style: " <> other))
 
-  when (base58 actual /= vector.expectedAddressBase58) do
+  when (actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Bootstrap vector mismatch: " <> vector.label))
 
 assertFamilyRestoreVector :: FamilyRestoreVector -> Aff Unit
@@ -98,7 +97,7 @@ assertFamilyRestoreVector vector = do
     other ->
       liftEffect (throw ("Unsupported family restore style: " <> other))
 
-  when (base58 actual /= vector.expectedAddressBase58) do
+  when (actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Family restore vector mismatch: " <> vector.label))
 
 assertShelleyRestoreVector :: ShelleyRestoreVector -> Aff Unit

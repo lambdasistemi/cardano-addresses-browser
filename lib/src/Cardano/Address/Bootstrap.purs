@@ -12,15 +12,14 @@ module Cardano.Address.Bootstrap
 
 import Prelude
 
-import Cardano.Address (Address, unsafeMkAddress)
 import Cardano.Address.Bech32 as Bech32
 import Cardano.Codec.Bech32.Prefixes as Prefixes
 import Control.Promise (Promise, toAffE)
 import Data.ArrayBuffer.Types (Uint8Array)
 import Data.Either (Either(..))
+import Data.String (joinWith)
 import Effect (Effect)
 import Effect.Aff (Aff)
-import Data.String (joinWith)
 
 data LegacyStyle
   = LegacyIcarus
@@ -47,14 +46,14 @@ derive instance eqLegacyNetwork :: Eq LegacyNetwork
 foreign import constructIcarusAddressImpl
   :: Int
   -> Uint8Array
-  -> Uint8Array
+  -> Effect (Promise String)
 
 foreign import constructByronAddressImpl
   :: Int
   -> Uint8Array
   -> Uint8Array
   -> String
-  -> Effect (Promise Uint8Array)
+  -> Effect (Promise String)
 
 foreign import constructIcarusAddressFromMnemonicImpl
   :: Int
@@ -62,14 +61,14 @@ foreign import constructIcarusAddressFromMnemonicImpl
   -> Int
   -> Int
   -> Int
-  -> Effect (Promise Uint8Array)
+  -> Effect (Promise String)
 
 foreign import constructByronAddressFromMnemonicImpl
   :: Int
   -> String
   -> Int
   -> Int
-  -> Effect (Promise Uint8Array)
+  -> Effect (Promise String)
 
 parseBootstrapXPub :: String -> Either String Uint8Array
 parseBootstrapXPub value = do
@@ -79,25 +78,23 @@ parseBootstrapXPub value = do
   else
     Left "Expected a bech32 extended public key with addr_xvk or root_xvk prefix."
 
-constructIcarusAddress :: LegacyNetwork -> Uint8Array -> Address
+constructIcarusAddress :: LegacyNetwork -> Uint8Array -> Aff String
 constructIcarusAddress network xpub =
-  unsafeMkAddress (constructIcarusAddressImpl (legacyProtocolMagic network) xpub)
+  toAffE (constructIcarusAddressImpl (legacyProtocolMagic network) xpub)
 
 constructByronAddress
   :: LegacyNetwork
   -> Uint8Array
   -> Uint8Array
   -> String
-  -> Aff Address
+  -> Aff String
 constructByronAddress network addressXPub rootXPub derivationPath =
-  map unsafeMkAddress
-    ( toAffE
-        ( constructByronAddressImpl
-            (legacyProtocolMagic network)
-            addressXPub
-            rootXPub
-            derivationPath
-        )
+  toAffE
+    ( constructByronAddressImpl
+        (legacyProtocolMagic network)
+        addressXPub
+        rootXPub
+        derivationPath
     )
 
 constructIcarusAddressFromMnemonic
@@ -106,17 +103,15 @@ constructIcarusAddressFromMnemonic
   -> Int
   -> IcarusRole
   -> Int
-  -> Aff Address
+  -> Aff String
 constructIcarusAddressFromMnemonic network words accountIndex role addressIndex =
-  map unsafeMkAddress
-    ( toAffE
-        ( constructIcarusAddressFromMnemonicImpl
-            (legacyProtocolMagic network)
-            (joinMnemonic words)
-            accountIndex
-            (icarusRoleIndex role)
-            addressIndex
-        )
+  toAffE
+    ( constructIcarusAddressFromMnemonicImpl
+        (legacyProtocolMagic network)
+        (joinMnemonic words)
+        accountIndex
+        (icarusRoleIndex role)
+        addressIndex
     )
 
 constructByronAddressFromMnemonic
@@ -124,16 +119,14 @@ constructByronAddressFromMnemonic
   -> Array String
   -> Int
   -> Int
-  -> Aff Address
+  -> Aff String
 constructByronAddressFromMnemonic network words accountIndex addressIndex =
-  map unsafeMkAddress
-    ( toAffE
-        ( constructByronAddressFromMnemonicImpl
-            (legacyProtocolMagic network)
-            (joinMnemonic words)
-            accountIndex
-            addressIndex
-        )
+  toAffE
+    ( constructByronAddressFromMnemonicImpl
+        (legacyProtocolMagic network)
+        (joinMnemonic words)
+        accountIndex
+        addressIndex
     )
 
 legacyProtocolMagic :: LegacyNetwork -> Int
