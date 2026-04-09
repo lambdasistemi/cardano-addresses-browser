@@ -7,3 +7,4 @@ dist/wasm/
 .psa-stash/
 .psci_modules/
 WIP.md
+result
