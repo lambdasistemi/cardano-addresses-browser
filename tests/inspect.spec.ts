@@ -4,6 +4,10 @@ const shelleyAddress =
   "addr1vyeq0sedsphv9j4u0rlhakrfh5cf3d7mj0zrej92jw44n6c0fpycd";
 
 test("inspect page decodes a Shelley address", async ({ page }) => {
+  const consoleLogs: string[] = [];
+  page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+  page.on("pageerror", (err) => consoleLogs.push(`[pageerror] ${err.message}`));
+
   await page.goto("/");
 
   await page.getByRole("button", { name: /Inspect Decode addresses/ }).click();
@@ -26,7 +30,13 @@ test("inspect page decodes a Shelley address", async ({ page }) => {
   const errorEl = page.locator(".result-error");
   if (await errorEl.isVisible()) {
     const errorText = await errorEl.textContent();
-    throw new Error(`Inspect returned error: ${errorText}`);
+    throw new Error(`Inspect returned error: ${errorText}\nConsole: ${consoleLogs.join("\n")}`);
+  }
+
+  // If neither result nor error, dump console for debugging
+  const resultVisible = await page.locator(".result-grid").isVisible();
+  if (!resultVisible) {
+    throw new Error(`No result rendered.\nConsole: ${consoleLogs.join("\n")}`);
   }
 
   await expect(page.getByText("Shelley")).toBeVisible();
