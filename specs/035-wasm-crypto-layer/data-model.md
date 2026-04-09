@@ -4,18 +4,18 @@
 
 ### WasmModule
 
-Represents a compiled WebAssembly module cached in the browser.
+Single compiled WebAssembly module cached in the browser.
 
-- `name :: String` — executable name (e.g., "inspect-address")
-- `module :: WebAssembly.Module` — compiled module (reusable across calls)
+- `module :: WebAssembly.Module` — compiled module (reusable across all calls)
 - `status :: Loading | Ready | Failed String` — initialization state
+- Binary: `cardano-addresses.wasm` (~5MB, ~1.5MB gzipped)
 
 ### WasmRequest
 
-JSON payload sent to a WASM executable via stdin.
+JSON payload sent to the WASM executable via stdin. The `cmd` field selects the operation.
 
-- `command :: String` — operation identifier (implicit from which WASM is called)
-- `payload :: JSON` — operation-specific input data
+- `cmd :: String` — operation: `"inspect"`, `"derive"`, `"make-address"`, `"sign"`
+- `...fields` — operation-specific input data (see protocol schemas below)
 
 ### WasmResponse
 
@@ -27,13 +27,12 @@ JSON payload received from WASM executable via stdout.
 
 ## Protocol Schemas
 
-### inspect-address
+### cmd: inspect
 
 **Input** (stdin):
 ```json
-"addr1q..."
+{"cmd": "inspect", "address": "addr1q..."}
 ```
-Raw address string (bech32, base58, or hex). No JSON wrapping — matches existing `inspect-address.wasm` behavior.
 
 **Output** (stdout):
 ```json
@@ -49,11 +48,12 @@ Raw address string (bech32, base58, or hex). No JSON wrapping — matches existi
 }
 ```
 
-### derive-key
+### cmd: derive
 
 **Input** (stdin):
 ```json
 {
+  "cmd": "derive",
   "mnemonic": "exercise club noble adult miracle ...",
   "passphrase": "",
   "style": "shelley",
@@ -72,11 +72,12 @@ Raw address string (bech32, base58, or hex). No JSON wrapping — matches existi
 }
 ```
 
-### make-address
+### cmd: make-address
 
 **Input** (stdin):
 ```json
 {
+  "cmd": "make-address",
   "type": "base",
   "network": "mainnet",
   "payment_key_hash": "hex...",
@@ -92,11 +93,12 @@ Raw address string (bech32, base58, or hex). No JSON wrapping — matches existi
 }
 ```
 
-### sign-message
+### cmd: sign
 
 **Input** (stdin):
 ```json
 {
+  "cmd": "sign",
   "signing_key": "hex...",
   "message": "hex..."
 }
@@ -129,7 +131,7 @@ Raw address string (bech32, base58, or hex). No JSON wrapping — matches existi
 
 ## Relationships
 
-- Each PureScript FFI function maps to exactly one WASM executable call
-- The `WasmModule` is shared across all calls to the same executable (module compiled once)
-- WASI FDs (stdin/stdout/stderr) are created fresh per invocation
+- Each PureScript FFI function maps to one WASM call with a specific `cmd` value
+- The single `WasmModule` is shared across ALL operations (compiled once, ~9ms)
+- WASI FDs (stdin/stdout/stderr) are created fresh per invocation (~3ms overhead)
 - The PureScript types (`InspectResult`, `DerivedKey`, `Address`, `Signature`) remain unchanged — only the JS FFI implementation changes

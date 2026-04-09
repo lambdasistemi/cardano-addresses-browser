@@ -25,24 +25,24 @@
 
 ---
 
-## Phase 2: Foundational — Haskell WASM Executables
+## Phase 2: Foundational — Single Haskell WASM Executable
 
-**Purpose**: Build the remaining WASM executables in `paolino/cardano-addresses`. These MUST exist before US2-US4 can proceed.
+**Purpose**: Refactor `inspect-address` into a unified `cardano-addresses.wasm` with JSON command dispatch. Each subsequent phase adds a new command to this executable.
 
-- [ ] T006 Create `browser/derive-key.hs` in `paolino/cardano-addresses` — reads JSON from stdin (`mnemonic`, `passphrase`, `style`, `path`), outputs derived key as JSON (extended signing key, verification key, key hash, bech32 encodings)
-- [ ] T007 Create `browser/make-address.hs` in `paolino/cardano-addresses` — reads JSON from stdin (`type`, `network`, `payment_key_hash`, `stake_key_hash`), outputs address as JSON (bech32, hex)
-- [ ] T008 Create `browser/sign-message.hs` in `paolino/cardano-addresses` — reads JSON from stdin (`signing_key`, `message`), outputs JSON (signature, verification key)
-- [ ] T009 Register all 3 new executables in `cardano-addresses.cabal` under WASM-only build targets
-- [ ] T010 Test all executables with `wasmtime`: pipe known test vector inputs, verify outputs match expected values
-- [ ] T011 Update `.github/workflows/wasm.yml` in `paolino/cardano-addresses` to build and publish all 4 WASM binaries as release artifacts
+- [ ] T006 Refactor `browser/inspect.hs` → `browser/Main.hs` in `paolino/cardano-addresses` — add JSON command dispatcher that reads `{"cmd":"inspect", ...}` from stdin; move existing inspect logic under the `inspect` command. Rename executable from `inspect-address` to `cardano-addresses-wasm` in cabal.
+- [ ] T007 Add `derive` command to `browser/Main.hs` — reads `{"cmd":"derive", "mnemonic":"...", "path":"1852H/1815H/0H/0/0"}`, outputs all derived keys as JSON (root, account, address, stake — both xsk and xvk hex-encoded)
+- [ ] T008 Add `make-address` command to `browser/Main.hs` — reads `{"cmd":"make-address", "payment_key":"...", "stake_key":"...", "network":"mainnet", "type":"base"}`, outputs address as JSON (bech32, hex)
+- [ ] T009 Add `sign` command to `browser/Main.hs` — reads `{"cmd":"sign", "key":"...", "message":"..."}`, outputs JSON (signature hex, verification key)
+- [ ] T010 Test all commands with `wasmtime`: pipe known test vector inputs as JSON, verify outputs match expected values
+- [ ] T011 Update `.github/workflows/wasm.yml` in `paolino/cardano-addresses` to build and publish `cardano-addresses.wasm` as release artifact
 
-**Checkpoint**: All 4 WASM executables build, pass wasmtime tests, and are available as CI artifacts
+**Checkpoint**: Single WASM binary handles all 4 commands, passes wasmtime tests, available as CI artifact
 
 ---
 
 ## Phase 3: User Story 1 — Address Inspection via WASM (Priority: P1) MVP
 
-**Goal**: Replace hand-written JS CBOR inspection with `inspect-address.wasm`
+**Goal**: Replace hand-written JS CBOR inspection with `cardano-addresses.wasm` `inspect` command
 
 **Independent Test**: Paste any bech32/base58 address in Inspect panel, verify output matches test vectors
 
@@ -51,7 +51,7 @@
 - [x] T012 [US1] Rewrite `lib/src/Cardano/Address/Inspect.js` — replace `inspectLegacyAddressImpl` and `inspectShelleyAddressImpl` with calls to `Wasm.callWasm(inspectModule, addressString)`, parse JSON response into existing result shape
 - [x] T013 [US1] Update `lib/src/Cardano/Address/Inspect.purs` — change FFI imports to use async WASM calls (Effect Promise instead of pure), add WasmModule parameter or module-level initialization
 - [x] T014 [US1] Update `app/src/App.purs` inspect handler — adapt to async WASM call pattern (Aff instead of pure), ensure loading state shown during WASM cold start
-- [ ] T015 [US1] Copy `inspect-address.wasm` to `dist/` and update build scripts (`justfile`, `nix/packages/`) to include WASM binary in distribution
+- [ ] T015 [US1] Copy `cardano-addresses.wasm` to `dist/wasm/` and update build scripts (`justfile`, `nix/packages/`) to include WASM binary in distribution
 - [ ] T016 [US1] Run PureScript test vectors (`npx spago test`) — verify all inspection vectors pass against WASM backend
 - [ ] T017 [US1] Run Playwright tests (`tests/inspect.spec.ts`) — verify UI behavior unchanged
 
@@ -61,7 +61,7 @@
 
 ## Phase 4: User Story 2 — Key Derivation via WASM (Priority: P2)
 
-**Goal**: Replace `cardano-crypto.js` key derivation with `derive-key.wasm`
+**Goal**: Replace `cardano-crypto.js` key derivation with `cardano-addresses.wasm` `derive` command
 
 **Independent Test**: Enter known mnemonic, verify derived keys at all levels match test vectors
 
@@ -83,7 +83,7 @@
 
 ## Phase 5: User Story 3 — Address Construction via WASM (Priority: P3)
 
-**Goal**: Replace JS address construction with `make-address.wasm`
+**Goal**: Replace JS address construction with `cardano-addresses.wasm` `make-address` command
 
 **Independent Test**: Given known keys and network, verify constructed addresses match test vectors
 
@@ -105,7 +105,7 @@
 
 ## Phase 6: User Story 4 — Signing via WASM (Priority: P4)
 
-**Goal**: Replace JS Ed25519 signing with `sign-message.wasm`
+**Goal**: Replace JS Ed25519 signing with `cardano-addresses.wasm` `sign` command
 
 **Independent Test**: Sign known message with known key, verify signature matches test vectors
 
@@ -159,16 +159,16 @@
 
 - **Phase 1 (Setup)**: No dependencies — start immediately
 - **Phase 2 (Haskell WASM)**: No dependencies on Phase 1 (different repo). Can run in parallel with Phase 1.
-- **Phase 3 (US1 Inspect)**: Depends on Phase 1 (bridge) + T005 (inspect-address.wasm)
-- **Phase 4 (US2 Derive)**: Depends on Phase 1 (bridge) + T006 (derive-key.wasm from Phase 2)
-- **Phase 5 (US3 Address)**: Depends on Phase 1 (bridge) + T007 (make-address.wasm from Phase 2)
-- **Phase 6 (US4 Sign)**: Depends on Phase 1 (bridge) + T008 (sign-message.wasm from Phase 2)
+- **Phase 3 (US1 Inspect)**: Depends on Phase 1 (bridge) + T006 (`inspect` command in `cardano-addresses.wasm`)
+- **Phase 4 (US2 Derive)**: Depends on Phase 1 (bridge) + T007 (`derive` command added to WASM binary)
+- **Phase 5 (US3 Address)**: Depends on Phase 1 (bridge) + T008 (`make-address` command added)
+- **Phase 6 (US4 Sign)**: Depends on Phase 1 (bridge) + T009 (`sign` command added)
 - **Phase 7 (US5 Cleanup)**: Depends on Phases 3-6 all complete
 - **Phase 8 (Polish)**: Depends on Phase 7
 
 ### Cross-repo dependency
 
-Phases 4-6 depend on new Haskell executables built in `paolino/cardano-addresses`. Phase 2 tasks happen in that repo; browser repo tasks wait for WASM artifacts.
+Each phase depends on the corresponding command being added to the single `cardano-addresses.wasm` binary in `paolino/cardano-addresses`. Phase 2 tasks build the Haskell executable; browser repo tasks consume the rebuilt WASM binary.
 
 ### Parallel Opportunities
 

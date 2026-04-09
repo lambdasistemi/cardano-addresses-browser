@@ -5,7 +5,7 @@
 
 ## Summary
 
-Replace all JS crypto reimplementations (12 FFI files, 5 npm dependencies) with the real Haskell `cardano-addresses` library compiled to WASM. Communication via JSON over WASI stdin/stdout. Proven pattern — `inspect-address.wasm` already works in browser.
+Replace all JS crypto reimplementations (12 FFI files, 5 npm dependencies) with the real Haskell `cardano-addresses` library compiled to a single WASM binary. Communication via JSON command dispatch over WASI stdin/stdout. Benchmarked at 3-4ms per call (Shelley), 13ms (legacy). Single 5MB binary, ~1.5MB gzipped.
 
 ## Technical Context
 
@@ -69,10 +69,8 @@ lib/
 dist/
 ├── app.js                            # Bundled PureScript app
 ├── index.html                        # Entry point
-├── inspect-address.wasm              # FROM: paolino/cardano-addresses CI
-├── derive-key.wasm                   # FROM: paolino/cardano-addresses CI
-├── make-address.wasm                 # FROM: paolino/cardano-addresses CI
-└── sign-message.wasm                 # FROM: paolino/cardano-addresses CI
+└── wasm/
+    └── cardano-addresses.wasm        # Single WASM binary with cmd dispatch
 
 test/
 ├── src/Test/Main.purs                # Existing test runner (unchanged)
@@ -82,7 +80,7 @@ tests/
 ├── *.spec.ts                         # Existing Playwright tests (unchanged)
 ```
 
-**Structure Decision**: Minimal structural change. New `Wasm.js`/`Wasm.purs` module added. Existing FFI files replaced in-place. WASM binaries in `dist/`.
+**Structure Decision**: Minimal structural change. New `Wasm.js`/`Wasm.purs` module added. Existing FFI files replaced in-place. Single WASM binary in `dist/wasm/`.
 
 ## Complexity Tracking
 
@@ -90,17 +88,19 @@ No constitution violations.
 
 ## Migration Strategy
 
-Each user story replaces one group of JS FFI files with WASM calls. The migration is incremental — each story can be merged independently while the remaining operations still use JS.
+Single WASM executable in `paolino/cardano-addresses`, growing incrementally. Each user story adds a new command to the Haskell executable and replaces the corresponding JS FFI files in the browser repo.
 
 **Order**: Inspect (P1) → Derive (P2) → Address (P3) → Sign (P4) → Cleanup (P5)
 
-The WASM bridge (`Wasm.js`/`Wasm.purs`) is built in P1 and reused by all subsequent stories.
+- The WASM bridge (`Wasm.js`/`Wasm.purs`) is built in P1 and reused by all subsequent stories.
+- The Haskell executable starts with `inspect` (P1) and gains `derive`, `make-address`, `sign` commands in P2-P4.
+- Each story rebuilds the single WASM binary with the new command added.
 
 ## Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| WASM binary too large | Medium | Medium | Lazy loading, gzip compression, split executables |
+| WASM binary too large | Low | Low | Single binary ~5MB / ~1.5MB gzipped; benchmarked at 9ms compile |
 | browser_wasi_shim missing syscalls | Low | High | Proven with inspect-address already |
 | Cold start latency noticeable | Low | Low | Module pre-compilation on page load |
 | New WASM executables fail to compile | Medium | High | Build incrementally, test with wasmtime first |

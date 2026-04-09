@@ -1,18 +1,26 @@
 # Research: Replace JS Crypto with WASM
 
-## Decision 1: WASM Architecture — Option A (Multiple WASI stdin/stdout executables)
+## Decision 1: WASM Architecture — Option B (Single WASI executable with command dispatch)
 
-**Decision**: Build separate WASM executables per operation, communicating via JSON on stdin/stdout.
+**Decision**: Build one WASM executable (`cardano-addresses.wasm`) that handles all operations via a JSON `cmd` field on stdin.
 
-**Rationale**: 
-- `inspect-address.wasm` already works end-to-end in browser (proven in paolino/cardano-addresses PR #5)
-- Each executable is testable independently with `wasmtime` on CLI
-- No complex FFI boundary design or memory management
-- WASI stdin/stdout is a stable, well-supported interface
-- Cold start (~50ms) is acceptable for interactive use; module caching amortizes it
+**Rationale**:
+- The WASM binary is ~5MB, dominated by the Haskell RTS. Multiple executables would mean N×5MB with no savings.
+- One `WebAssembly.compile()` call (9ms) instead of N. One fetch instead of N.
+- Benchmarked per-call overhead: **3-4ms** for Shelley operations, **13ms** for legacy CBOR parsing. Imperceptible for interactive use.
+- Single Haskell source file with command dispatch — cleaner than N separate executables.
+- Still testable with `wasmtime`: `echo '{"cmd":"inspect","address":"addr1..."}' | wasmtime cardano-addresses.wasm`
+
+**Benchmark results** (Node.js, `inspect-address.wasm` on x86_64):
+| Phase | Time |
+|-------|------|
+| Module compile (one-time) | 9ms |
+| First call (cold) | 16ms |
+| Subsequent calls (warm) | 3.4ms avg |
+| Legacy base58 address | 13ms |
 
 **Alternatives considered**:
-- Option B (single WASM with command dispatch): marginally simpler deployment but more complex Haskell code. Can migrate later if needed.
+- Option A (multiple executables): proven with `inspect-address.wasm`, but 4×5MB = 20MB total binary size for no performance benefit. Initially chosen, revised after benchmarking.
 - Option C (WASM reactor with exported functions): lowest latency but requires experimental GHC reactor mode. Too risky for now.
 
 ## Decision 2: WASM Loading Strategy
@@ -78,18 +86,18 @@ export const callWasmImpl = (onLeft) => (onRight) => (wasmModule) => (inputJson)
 - Building WASM in the browser repo's CI: duplicates the WASM toolchain setup, slower CI
 - Committing WASM to git: 5MB+ binaries in git history is unacceptable
 
-## Decision 5: WASM Executables Needed
+## Decision 5: Single Executable, Multiple Commands
 
-**Decision**: 4 WASM executables to replace all JS crypto:
+**Decision**: One WASM executable `cardano-addresses.wasm` with a JSON `cmd` dispatcher:
 
-| Executable | Replaces | Input (stdin JSON) | Output (stdout JSON) |
-|-----------|----------|-------------------|---------------------|
-| `inspect-address.wasm` | Inspect.js, Bech32.js, Base58.js, CBOR decoder | `{"address": "addr1q..."}` | Address inspection JSON |
-| `derive-key.wasm` | Derivation.js, Bootstrap.js, Mnemonic.js, Hash.js | `{"mnemonic": "...", "path": "1852H/1815H/0H/0/0", "style": "shelley"}` | Key bytes (hex-encoded) |
-| `make-address.wasm` | Shelley.js | `{"payment_key": "...", "stake_key": "...", "network": "mainnet", "type": "base"}` | Bech32 address |
-| `sign-message.wasm` | Signing.js | `{"key": "...", "message": "..."}` | Signature (hex) |
+| Command | Replaces | Input (stdin JSON) | Output (stdout JSON) |
+|---------|----------|-------------------|---------------------|
+| `inspect` | Inspect.js, CBOR decoder | `{"cmd":"inspect", "address":"addr1q..."}` | Address inspection JSON |
+| `derive` | Derivation.js, Bootstrap.js, Mnemonic.js, Hash.js | `{"cmd":"derive", "mnemonic":"...", "path":"1852H/1815H/0H/0/0"}` | Key bytes (hex-encoded) |
+| `make-address` | Shelley.js | `{"cmd":"make-address", "payment_key":"...", "stake_key":"...", "network":"mainnet"}` | Bech32 address |
+| `sign` | Signing.js | `{"cmd":"sign", "key":"...", "message":"..."}` | Signature (hex) |
 
-**Rationale**: One executable per logical operation. `inspect-address` already exists. The others follow the same pattern.
+**Rationale**: Single binary avoids duplicating the 5MB Haskell RTS. Commands are added incrementally — each user story adds a new `cmd` handler to the same executable. The existing `inspect-address.wasm` is refactored into the first command.
 
 ## Decision 6: Handling `@scure/bip39` (Mnemonic Validation)
 
@@ -102,12 +110,12 @@ export const callWasmImpl = (onLeft) => (onRight) => (wasmModule) => (inputJson)
 
 ## Decision 7: Bundle Size Impact
 
-**Decision**: WASM binaries are loaded separately from the main JS bundle. The JS bundle shrinks (fewer dependencies). Total page weight increases but is acceptable.
+**Decision**: Single WASM binary loaded separately from the main JS bundle. The JS bundle shrinks (fewer dependencies). Total page weight increases but is acceptable.
 
 **Rationale**:
 - Current JS bundle: ~200KB gzipped (estimate)
-- After migration: ~100KB gzipped JS + ~5MB WASM (loaded on demand, gzipped ~1.5MB)
-- WASM loaded only when first operation is triggered, not on page load
+- After migration: ~100KB gzipped JS + ~5MB WASM (one binary, gzipped ~1.5MB)
+- WASM loaded on first operation (~9ms compile), cached thereafter
 - Developer tool — users expect heavier pages; correctness matters more than load time
 
 ## Decision 8: cabal-wasm.project Dependencies
