@@ -242,15 +242,13 @@ handleAction = case _ of
     H.modify_ _ { activePage = page }
   SetInspectInput value ->
     H.modify_ _ { inspectInput = value, inspectResult = Nothing }
-  RunInspect ->
-    H.modify_ \state ->
-      state
-        { inspectResult =
-            if state.inspectInput == "" then
-              Just (Left "Paste a Cardano address to inspect.")
-            else
-              Just (Inspect.eitherInspectAddress state.inspectInput)
-        }
+  RunInspect -> do
+    state <- H.get
+    if state.inspectInput == "" then
+      H.modify_ _ { inspectResult = Just (Left "Paste a Cardano address to inspect.") }
+    else do
+      result <- H.liftAff (Inspect.eitherInspectAddress state.inspectInput)
+      H.modify_ _ { inspectResult = Just result }
   SetMnemonicWordCount value ->
     H.modify_ _ { mnemonicWordCount = value }
   GenerateMnemonic -> do

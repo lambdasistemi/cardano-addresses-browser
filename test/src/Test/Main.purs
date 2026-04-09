@@ -23,7 +23,7 @@ import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, Ins
 main :: Effect Unit
 main = launchAff_ do
   traverse_ assertDerivationVector derivationVectors
-  liftEffect (traverse_ assertInspectionVector inspectionVectors)
+  traverse_ assertInspectionVector inspectionVectors
   traverse_ assertBootstrapVector bootstrapVectors
   traverse_ assertFamilyRestoreVector familyRestoreVectors
   traverse_ assertShelleyRestoreVector shelleyRestoreVectors
@@ -38,14 +38,15 @@ assertDerivationVector vector = do
     liftEffect $
       throw ("Derivation vector mismatch: " <> vector.label)
 
-assertInspectionVector :: InspectionVector -> Effect Unit
-assertInspectionVector vector =
-  case eitherInspectAddress vector.address of
+assertInspectionVector :: InspectionVector -> Aff Unit
+assertInspectionVector vector = do
+  result <- eitherInspectAddress vector.address
+  case result of
     Right actual | actual == vector.expected -> pure unit
     Right _ ->
-      throw ("Inspection vector mismatch: " <> vector.label)
+      liftEffect (throw ("Inspection vector mismatch: " <> vector.label))
     Left err ->
-      throw ("Inspection unexpectedly failed for " <> vector.label <> ": " <> err)
+      liftEffect (throw ("Inspection unexpectedly failed for " <> vector.label <> ": " <> err))
 
 parseRole :: String -> Role
 parseRole = case _ of
