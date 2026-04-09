@@ -15,11 +15,11 @@
 
 **Purpose**: WASM bridge infrastructure and dependency setup
 
-- [ ] T001 Add `@bjorn3/browser_wasi_shim` to `package.json` dependencies
-- [ ] T002 Create WASM bridge module `lib/src/Cardano/Address/Wasm.js` — implement `loadWasmModule` (fetch + compile), `callWasm` (WASI stdin/stdout JSON protocol using OpenFile, ConsoleStdout, WASI from browser_wasi_shim)
-- [ ] T003 Create PureScript FFI types `lib/src/Cardano/Address/Wasm.purs` — `WasmModule` type, `loadWasmModule :: String -> Effect (Promise WasmModule)`, `callWasm :: WasmModule -> String -> Effect (Promise (Either String String))`
-- [ ] T004 Add WASM binary fetch path configuration — base URL for `.wasm` files relative to `dist/`
-- [ ] T005 Build `inspect-address.wasm` from `paolino/cardano-addresses` using `wasm32-wasi-cabal --project-file=cabal-wasm.project build inspect-address` and place in `dist/`
+- [x] T001 Add `@bjorn3/browser_wasi_shim` to `package.json` dependencies
+- [x] T002 Create WASM bridge module `lib/src/Cardano/Address/Wasm.js` — implement `loadWasmModule` (fetch + compile), `callWasm` (WASI stdin/stdout JSON protocol using OpenFile, ConsoleStdout, WASI from browser_wasi_shim)
+- [x] T003 Create PureScript FFI types `lib/src/Cardano/Address/Wasm.purs` — `WasmModule` type, `loadWasmModule :: String -> Effect (Promise WasmModule)`, `callWasm :: WasmModule -> String -> Effect (Promise (Either String String))`
+- [x] T004 Add WASM binary fetch path configuration — base URL for `.wasm` files relative to `dist/`
+- [x] T005 Build `inspect-address.wasm` from `paolino/cardano-addresses` using `wasm32-wasi-cabal --project-file=cabal-wasm.project build inspect-address` and place in `dist/`
 
 **Checkpoint**: WASM bridge loads and can execute `inspect-address.wasm` in browser
 
@@ -48,9 +48,9 @@
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Rewrite `lib/src/Cardano/Address/Inspect.js` — replace `inspectLegacyAddressImpl` and `inspectShelleyAddressImpl` with calls to `Wasm.callWasm(inspectModule, addressString)`, parse JSON response into existing result shape
-- [ ] T013 [US1] Update `lib/src/Cardano/Address/Inspect.purs` — change FFI imports to use async WASM calls (Effect Promise instead of pure), add WasmModule parameter or module-level initialization
-- [ ] T014 [US1] Update `app/src/App.purs` inspect handler — adapt to async WASM call pattern (Aff instead of pure), ensure loading state shown during WASM cold start
+- [x] T012 [US1] Rewrite `lib/src/Cardano/Address/Inspect.js` — replace `inspectLegacyAddressImpl` and `inspectShelleyAddressImpl` with calls to `Wasm.callWasm(inspectModule, addressString)`, parse JSON response into existing result shape
+- [x] T013 [US1] Update `lib/src/Cardano/Address/Inspect.purs` — change FFI imports to use async WASM calls (Effect Promise instead of pure), add WasmModule parameter or module-level initialization
+- [x] T014 [US1] Update `app/src/App.purs` inspect handler — adapt to async WASM call pattern (Aff instead of pure), ensure loading state shown during WASM cold start
 - [ ] T015 [US1] Copy `inspect-address.wasm` to `dist/` and update build scripts (`justfile`, `nix/packages/`) to include WASM binary in distribution
 - [ ] T016 [US1] Run PureScript test vectors (`npx spago test`) — verify all inspection vectors pass against WASM backend
 - [ ] T017 [US1] Run Playwright tests (`tests/inspect.spec.ts`) — verify UI behavior unchanged
