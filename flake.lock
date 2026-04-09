@@ -53,11 +53,11 @@
     "cardano-addresses-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1775734625,
-        "narHash": "sha256-+TkwCJy9SelLhM6ROWfI71iQsYlNjyfO/BPw0YGKHvM=",
+        "lastModified": 1775743917,
+        "narHash": "sha256-db2/lB3J8VI6ABD1eSiASuFuxyT2tRD39VynbE2qJPQ=",
         "owner": "paolino",
         "repo": "cardano-addresses",
-        "rev": "125f6d425cb6d781535162e67c88429036dac3d4",
+        "rev": "a76101e6991b9164c659127ddcab94617742b18c",
         "type": "github"
       },
       "original": {
