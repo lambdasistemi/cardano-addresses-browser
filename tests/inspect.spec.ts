@@ -22,9 +22,16 @@ test("inspect page decodes a Shelley address", async ({ page }) => {
   await page.getByPlaceholder("addr1... or DdzFF...").fill(shelleyAddress);
   await page.getByRole("button", { name: "Inspect address" }).click();
 
+  // Wait briefly for WASM call to complete, then dump page state
+  await page.waitForTimeout(10000);
+  const html = await page.content();
+  const inspectSection = html.match(/Inspection result[\s\S]{0,1000}/)?.[0] || "section not found";
+  console.log("PAGE STATE:", inspectSection.slice(0, 500));
+  console.log("CONSOLE LOGS:", consoleLogs.join(" | "));
+
   // Wait for either a result or an error after WASM call
   const resultOrError = page.locator(".result-grid, .result-error");
-  await expect(resultOrError).toBeVisible({ timeout: 30000 });
+  await expect(resultOrError).toBeVisible({ timeout: 5000 });
 
   // If there's an error, fail with the error text for debugging
   const errorEl = page.locator(".result-error");
