@@ -769,26 +769,18 @@ refreshSigning = do
   state <- H.get
   if signingInputIsBlank state.signingPayloadMode state.signingPayloadInput || String.trim state.signingKeyInput == "" then
     H.modify_ _ { signingResult = Nothing }
-  else
-    H.modify_ _
-      { signingResult = Just (Signing.signPayload state.signingPayloadMode state.signingPayloadInput state.signingKeyInput) }
+  else do
+    result <- H.liftAff (Signing.signPayload state.signingPayloadMode state.signingPayloadInput state.signingKeyInput)
+    H.modify_ _ { signingResult = Just result }
 
 refreshVerification :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshVerification = do
   state <- H.get
   if signingInputIsBlank state.verifyPayloadMode state.verifyPayloadInput || String.trim state.verificationKeyInput == "" || String.trim state.signatureInput == "" then
     H.modify_ _ { verificationResult = Nothing }
-  else
-    H.modify_ _
-      { verificationResult =
-          Just
-            ( Signing.verifySignature
-                state.verifyPayloadMode
-                state.verifyPayloadInput
-                state.verificationKeyInput
-                state.signatureInput
-            )
-      }
+  else do
+    result <- H.liftAff (Signing.verifySignature state.verifyPayloadMode state.verifyPayloadInput state.verificationKeyInput state.signatureInput)
+    H.modify_ _ { verificationResult = Just result }
 
 scriptAnalysisStatus :: ScriptInputMode -> String -> Maybe (Either String Script.ScriptAnalysis)
 scriptAnalysisStatus mode value =

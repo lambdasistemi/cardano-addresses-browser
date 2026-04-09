@@ -27,7 +27,7 @@ main = launchAff_ do
   traverse_ assertBootstrapVector bootstrapVectors
   traverse_ assertFamilyRestoreVector familyRestoreVectors
   traverse_ assertShelleyRestoreVector shelleyRestoreVectors
-  liftEffect (traverse_ assertSigningVector signingVectors)
+  traverse_ assertSigningVector signingVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
 
@@ -115,10 +115,12 @@ assertShelleyRestoreVector vector = do
         "stake" -> Nothing
         _ -> Just derivedKeys.addressPublicKeyBech32
 
-  case Shelley.constructShelleyAddresses
-    (parseShelleyNetwork vector.networkTag)
-    paymentXPub
-    derivedKeys.stakePublicKeyBech32 of
+  case
+    Shelley.constructShelleyAddresses
+      (parseShelleyNetwork vector.networkTag)
+      paymentXPub
+      derivedKeys.stakePublicKeyBech32
+    of
     Right actual | actual == expectedShelleyAddresses vector -> pure unit
     Right _ ->
       liftEffect (throw ("Shelley restore vector mismatch: " <> vector.label))
@@ -163,27 +165,29 @@ parseIcarusRole = case _ of
   Just other -> unsafeCrashWith ("Unsupported Icarus role: " <> other)
   Nothing -> unsafeCrashWith "Missing Icarus role"
 
-assertSigningVector :: SigningVector -> Effect Unit
+assertSigningVector :: SigningVector -> Aff Unit
 assertSigningVector vector = do
-  case Signing.signPayload
+  signResult <- Signing.signPayload
     (parsePayloadMode vector.payloadMode)
     vector.payloadInput
-    vector.signingKeyBech32 of
+    vector.signingKeyBech32
+  case signResult of
     Right actual | actual.signatureHex == vector.signatureHex && actual.verificationKeyBech32 == vector.verificationKeyBech32 -> do
-      case Signing.verifySignature
+      verifyResult <- Signing.verifySignature
         (parsePayloadMode vector.payloadMode)
         vector.payloadInput
         vector.verificationKeyBech32
-        vector.signatureHex of
+        vector.signatureHex
+      case verifyResult of
         Right true -> pure unit
         Right false ->
-          throw ("Signing verification returned false for " <> vector.label)
+          liftEffect (throw ("Signing verification returned false for " <> vector.label))
         Left err ->
-          throw ("Signing verification failed for " <> vector.label <> ": " <> err)
+          liftEffect (throw ("Signing verification failed for " <> vector.label <> ": " <> err))
     Right _ ->
-      throw ("Signing vector mismatch: " <> vector.label)
+      liftEffect (throw ("Signing vector mismatch: " <> vector.label))
     Left err ->
-      throw ("Signing unexpectedly failed for " <> vector.label <> ": " <> err)
+      liftEffect (throw ("Signing unexpectedly failed for " <> vector.label <> ": " <> err))
 
 parsePayloadMode :: String -> Signing.PayloadMode
 parsePayloadMode = case _ of
