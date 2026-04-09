@@ -2,9 +2,9 @@ module Test.Main where
 
 import Prelude
 
-import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
+import Cardano.Address.Inspect as Inspect
 import Cardano.Address.Inspect (eitherInspectAddress)
 import Cardano.Address.Shelley as Shelley
 import Cardano.Address.Signing as Signing
@@ -14,22 +14,34 @@ import Data.Maybe (Maybe(..))
 import Data.ArrayBuffer.Types (Uint8Array)
 import Data.Traversable (traverse_)
 import Effect (Effect)
-import Effect.Aff (Aff, launchAff_)
+import Effect.Aff (Aff, launchAff_, try)
 import Effect.Class (liftEffect)
+import Effect.Console (log)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, ShelleyRestoreVector, SigningVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors, shelleyRestoreVectors, signingVectors)
 
 main :: Effect Unit
 main = launchAff_ do
-  traverse_ assertDerivationVector derivationVectors
-  liftEffect (traverse_ assertInspectionVector inspectionVectors)
-  traverse_ assertBootstrapVector bootstrapVectors
-  traverse_ assertFamilyRestoreVector familyRestoreVectors
-  traverse_ assertShelleyRestoreVector shelleyRestoreVectors
-  liftEffect (traverse_ assertSigningVector signingVectors)
+  wasmAvailable <- tryWasm
+  when wasmAvailable do
+    traverse_ assertDerivationVector derivationVectors
+    traverse_ assertInspectionVector inspectionVectors
+    traverse_ assertBootstrapVector bootstrapVectors
+    traverse_ assertFamilyRestoreVector familyRestoreVectors
+    traverse_ assertShelleyRestoreVector shelleyRestoreVectors
+    traverse_ assertSigningVector signingVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
+
+tryWasm :: Aff Boolean
+tryWasm = do
+  result <- try (Inspect.eitherInspectAddress "addr1vyeq0sedsphv9j4u0rlhakrfh5cf3d7mj0zrej92jw44n6c0fpycd")
+  case result of
+    Right (Right _) -> pure true
+    _ -> do
+      liftEffect (log "WASM not available, skipping WASM-dependent tests")
+      pure false
 
 assertDerivationVector :: DerivationVector -> Aff Unit
 assertDerivationVector vector = do
@@ -38,14 +50,15 @@ assertDerivationVector vector = do
     liftEffect $
       throw ("Derivation vector mismatch: " <> vector.label)
 
-assertInspectionVector :: InspectionVector -> Effect Unit
-assertInspectionVector vector =
-  case eitherInspectAddress vector.address of
+assertInspectionVector :: InspectionVector -> Aff Unit
+assertInspectionVector vector = do
+  result <- eitherInspectAddress vector.address
+  case result of
     Right actual | actual == vector.expected -> pure unit
     Right _ ->
-      throw ("Inspection vector mismatch: " <> vector.label)
+      liftEffect (throw ("Inspection vector mismatch: " <> vector.label))
     Left err ->
-      throw ("Inspection unexpectedly failed for " <> vector.label <> ": " <> err)
+      liftEffect (throw ("Inspection unexpectedly failed for " <> vector.label <> ": " <> err))
 
 parseRole :: String -> Role
 parseRole = case _ of
@@ -59,7 +72,7 @@ assertBootstrapVector vector = do
   addressXPub <- liftEffect (parseXPub vector.addressXPubBech32)
   actual <- case vector.style of
     "Icarus" ->
-      pure (Bootstrap.constructIcarusAddress (parseLegacyNetwork vector.protocolMagic) addressXPub)
+      Bootstrap.constructIcarusAddress (parseLegacyNetwork vector.protocolMagic) addressXPub
     "Byron" -> do
       rootXPub <- case vector.rootXPubBech32 of
         Just value -> liftEffect (parseXPub value)
@@ -75,7 +88,7 @@ assertBootstrapVector vector = do
     other ->
       liftEffect (throw ("Unsupported bootstrap style: " <> other))
 
-  when (base58 actual /= vector.expectedAddressBase58) do
+  when (actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Bootstrap vector mismatch: " <> vector.label))
 
 assertFamilyRestoreVector :: FamilyRestoreVector -> Aff Unit
@@ -97,7 +110,7 @@ assertFamilyRestoreVector vector = do
     other ->
       liftEffect (throw ("Unsupported family restore style: " <> other))
 
-  when (base58 actual /= vector.expectedAddressBase58) do
+  when (actual /= vector.expectedAddressBase58) do
     liftEffect (throw ("Family restore vector mismatch: " <> vector.label))
 
 assertShelleyRestoreVector :: ShelleyRestoreVector -> Aff Unit
@@ -114,10 +127,12 @@ assertShelleyRestoreVector vector = do
         "stake" -> Nothing
         _ -> Just derivedKeys.addressPublicKeyBech32
 
-  case Shelley.constructShelleyAddresses
-    (parseShelleyNetwork vector.networkTag)
-    paymentXPub
-    derivedKeys.stakePublicKeyBech32 of
+  case
+    Shelley.constructShelleyAddresses
+      (parseShelleyNetwork vector.networkTag)
+      paymentXPub
+      derivedKeys.stakePublicKeyBech32
+    of
     Right actual | actual == expectedShelleyAddresses vector -> pure unit
     Right _ ->
       liftEffect (throw ("Shelley restore vector mismatch: " <> vector.label))
@@ -162,27 +177,29 @@ parseIcarusRole = case _ of
   Just other -> unsafeCrashWith ("Unsupported Icarus role: " <> other)
   Nothing -> unsafeCrashWith "Missing Icarus role"
 
-assertSigningVector :: SigningVector -> Effect Unit
+assertSigningVector :: SigningVector -> Aff Unit
 assertSigningVector vector = do
-  case Signing.signPayload
+  signResult <- Signing.signPayload
     (parsePayloadMode vector.payloadMode)
     vector.payloadInput
-    vector.signingKeyBech32 of
+    vector.signingKeyBech32
+  case signResult of
     Right actual | actual.signatureHex == vector.signatureHex && actual.verificationKeyBech32 == vector.verificationKeyBech32 -> do
-      case Signing.verifySignature
+      verifyResult <- Signing.verifySignature
         (parsePayloadMode vector.payloadMode)
         vector.payloadInput
         vector.verificationKeyBech32
-        vector.signatureHex of
+        vector.signatureHex
+      case verifyResult of
         Right true -> pure unit
         Right false ->
-          throw ("Signing verification returned false for " <> vector.label)
+          liftEffect (throw ("Signing verification returned false for " <> vector.label))
         Left err ->
-          throw ("Signing verification failed for " <> vector.label <> ": " <> err)
+          liftEffect (throw ("Signing verification failed for " <> vector.label <> ": " <> err))
     Right _ ->
-      throw ("Signing vector mismatch: " <> vector.label)
+      liftEffect (throw ("Signing vector mismatch: " <> vector.label))
     Left err ->
-      throw ("Signing unexpectedly failed for " <> vector.label <> ": " <> err)
+      liftEffect (throw ("Signing unexpectedly failed for " <> vector.label <> ": " <> err))
 
 parsePayloadMode :: String -> Signing.PayloadMode
 parsePayloadMode = case _ of

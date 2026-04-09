@@ -3,7 +3,6 @@ module App where
 import Prelude
 
 import App.Vault as Vault
-import Cardano.Address (base58)
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation as Derivation
 import Cardano.Address.Inspect as Inspect
@@ -242,14 +241,16 @@ handleAction = case _ of
     H.modify_ _ { activePage = page }
   SetInspectInput value ->
     H.modify_ _ { inspectInput = value, inspectResult = Nothing }
-  RunInspect ->
-    H.modify_ \state ->
-      state
-        { inspectResult =
-            if state.inspectInput == "" then
-              Just (Left "Paste a Cardano address to inspect.")
-            else
-              Just (Inspect.eitherInspectAddress state.inspectInput)
+  RunInspect -> do
+    state <- H.get
+    if state.inspectInput == "" then
+      H.modify_ _ { inspectResult = Just (Left "Paste a Cardano address to inspect.") }
+    else do
+      outcome <- H.liftAff (try (Inspect.eitherInspectAddress state.inspectInput))
+      H.modify_ _
+        { inspectResult = Just case outcome of
+            Right result -> result
+            Left err -> Left (message err)
         }
   SetMnemonicWordCount value ->
     H.modify_ _ { mnemonicWordCount = value }
@@ -680,8 +681,8 @@ refreshDerivation = do
           result = case selectedNetwork of
             Left err -> pure (Left err)
             Right network -> do
-              address <- Bootstrap.constructIcarusAddressFromMnemonic network words accountIndex role addressIndex
-              pure (Right (base58 address))
+              addressBase58 <- Bootstrap.constructIcarusAddressFromMnemonic network words accountIndex role addressIndex
+              pure (Right addressBase58)
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
@@ -696,8 +697,8 @@ refreshDerivation = do
           result = case selectedNetwork of
             Left err -> pure (Left err)
             Right network -> do
-              address <- Bootstrap.constructByronAddressFromMnemonic network words accountIndex addressIndex
-              pure (Right (base58 address))
+              addressBase58 <- Bootstrap.constructByronAddressFromMnemonic network words accountIndex addressIndex
+              pure (Right addressBase58)
         actual <- liftAff (try result)
         H.modify_ _
           { derivationResult = Nothing
@@ -741,8 +742,9 @@ refreshLegacyConstruction = do
             Left err ->
               pure (Left err)
             Right addressXPub -> case state.legacyStyle of
-              Bootstrap.LegacyIcarus ->
-                pure (Right (base58 (Bootstrap.constructIcarusAddress network addressXPub)))
+              Bootstrap.LegacyIcarus -> do
+                addressBase58 <- Bootstrap.constructIcarusAddress network addressXPub
+                pure (Right addressBase58)
               Bootstrap.LegacyByron ->
                 if String.trim state.legacyRootXPubInput == "" then
                   pure (Left "Paste the root_xvk key for Byron bootstrap addresses.")
@@ -753,12 +755,12 @@ refreshLegacyConstruction = do
                     if String.trim state.legacyDerivationPathInput == "" then
                       pure (Left "Enter a 2-segment Byron path like 0H/0.")
                     else do
-                      address <- Bootstrap.constructByronAddress
+                      addressBase58 <- Bootstrap.constructByronAddress
                         network
                         addressXPub
                         rootXPub
                         state.legacyDerivationPathInput
-                      pure (Right (base58 address))
+                      pure (Right addressBase58)
     actual <- liftAff (try result)
     H.modify_ _
       { legacyResult = Just case actual of
@@ -771,26 +773,18 @@ refreshSigning = do
   state <- H.get
   if signingInputIsBlank state.signingPayloadMode state.signingPayloadInput || String.trim state.signingKeyInput == "" then
     H.modify_ _ { signingResult = Nothing }
-  else
-    H.modify_ _
-      { signingResult = Just (Signing.signPayload state.signingPayloadMode state.signingPayloadInput state.signingKeyInput) }
+  else do
+    result <- H.liftAff (Signing.signPayload state.signingPayloadMode state.signingPayloadInput state.signingKeyInput)
+    H.modify_ _ { signingResult = Just result }
 
 refreshVerification :: forall output monad. MonadAff monad => H.HalogenM State Action () output monad Unit
 refreshVerification = do
   state <- H.get
   if signingInputIsBlank state.verifyPayloadMode state.verifyPayloadInput || String.trim state.verificationKeyInput == "" || String.trim state.signatureInput == "" then
     H.modify_ _ { verificationResult = Nothing }
-  else
-    H.modify_ _
-      { verificationResult =
-          Just
-            ( Signing.verifySignature
-                state.verifyPayloadMode
-                state.verifyPayloadInput
-                state.verificationKeyInput
-                state.signatureInput
-            )
-      }
+  else do
+    result <- H.liftAff (Signing.verifySignature state.verifyPayloadMode state.verifyPayloadInput state.verificationKeyInput state.signatureInput)
+    H.modify_ _ { verificationResult = Just result }
 
 scriptAnalysisStatus :: ScriptInputMode -> String -> Maybe (Either String Script.ScriptAnalysis)
 scriptAnalysisStatus mode value =
