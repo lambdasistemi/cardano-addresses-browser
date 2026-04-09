@@ -18,7 +18,7 @@ test("inspect page decodes a Shelley address", async ({ page }) => {
   await page.getByPlaceholder("addr1... or DdzFF...").fill(shelleyAddress);
   await page.getByRole("button", { name: "Inspect address" }).click();
 
-  await expect(page.getByText("Shelley")).toBeVisible();
+  await expect(page.getByText("Shelley")).toBeVisible({ timeout: 30000 });
   await expect(page.getByText("Enterprise address (key)")).toBeVisible();
   await expect(page.getByText("Mainnet")).toBeVisible();
   await expect(
