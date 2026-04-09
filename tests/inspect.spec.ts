@@ -18,7 +18,18 @@ test("inspect page decodes a Shelley address", async ({ page }) => {
   await page.getByPlaceholder("addr1... or DdzFF...").fill(shelleyAddress);
   await page.getByRole("button", { name: "Inspect address" }).click();
 
-  await expect(page.getByText("Shelley")).toBeVisible({ timeout: 30000 });
+  // Wait for either a result or an error after WASM call
+  const resultOrError = page.locator(".result-grid, .result-error");
+  await expect(resultOrError).toBeVisible({ timeout: 30000 });
+
+  // If there's an error, fail with the error text for debugging
+  const errorEl = page.locator(".result-error");
+  if (await errorEl.isVisible()) {
+    const errorText = await errorEl.textContent();
+    throw new Error(`Inspect returned error: ${errorText}`);
+  }
+
+  await expect(page.getByText("Shelley")).toBeVisible();
   await expect(page.getByText("Enterprise address (key)")).toBeVisible();
   await expect(page.getByText("Mainnet")).toBeVisible();
   await expect(
