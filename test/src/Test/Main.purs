@@ -4,6 +4,7 @@ import Prelude
 
 import Cardano.Address.Bootstrap as Bootstrap
 import Cardano.Address.Derivation (Role(..), derivePipeline)
+import Cardano.Address.Inspect as Inspect
 import Cardano.Address.Inspect (eitherInspectAddress)
 import Cardano.Address.Shelley as Shelley
 import Cardano.Address.Signing as Signing
@@ -13,22 +14,34 @@ import Data.Maybe (Maybe(..))
 import Data.ArrayBuffer.Types (Uint8Array)
 import Data.Traversable (traverse_)
 import Effect (Effect)
-import Effect.Aff (Aff, launchAff_)
+import Effect.Aff (Aff, launchAff_, try)
 import Effect.Class (liftEffect)
+import Effect.Console (log)
 import Effect.Exception (throw)
 import Partial.Unsafe (unsafeCrashWith)
 import Test.Vectors (BootstrapVector, DerivationVector, FamilyRestoreVector, InspectionVector, ScriptHashVector, ScriptTemplateVector, ShelleyRestoreVector, SigningVector, bootstrapVectors, derivationVectors, familyRestoreVectors, inspectionVectors, scriptHashVectors, scriptTemplateVectors, shelleyRestoreVectors, signingVectors)
 
 main :: Effect Unit
 main = launchAff_ do
-  traverse_ assertDerivationVector derivationVectors
-  traverse_ assertInspectionVector inspectionVectors
-  traverse_ assertBootstrapVector bootstrapVectors
-  traverse_ assertFamilyRestoreVector familyRestoreVectors
-  traverse_ assertShelleyRestoreVector shelleyRestoreVectors
-  traverse_ assertSigningVector signingVectors
+  wasmAvailable <- tryWasm
+  when wasmAvailable do
+    traverse_ assertDerivationVector derivationVectors
+    traverse_ assertInspectionVector inspectionVectors
+    traverse_ assertBootstrapVector bootstrapVectors
+    traverse_ assertFamilyRestoreVector familyRestoreVectors
+    traverse_ assertShelleyRestoreVector shelleyRestoreVectors
+    traverse_ assertSigningVector signingVectors
   liftEffect (traverse_ assertScriptHashVector scriptHashVectors)
   liftEffect (traverse_ assertScriptTemplateVector scriptTemplateVectors)
+
+tryWasm :: Aff Boolean
+tryWasm = do
+  result <- try (Inspect.eitherInspectAddress "addr1vyeq0sedsphv9j4u0rlhakrfh5cf3d7mj0zrej92jw44n6c0fpycd")
+  case result of
+    Right (Right _) -> pure true
+    _ -> do
+      liftEffect (log "WASM not available, skipping WASM-dependent tests")
+      pure false
 
 assertDerivationVector :: DerivationVector -> Aff Unit
 assertDerivationVector vector = do

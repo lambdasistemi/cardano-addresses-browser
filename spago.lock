@@ -49,7 +49,9 @@
           "dependencies": [
             "aff",
             "cardano-addresses",
+            "console",
             "effect",
+            "either",
             "maybe",
             "partial",
             "prelude"
