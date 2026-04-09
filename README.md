@@ -19,7 +19,7 @@ A single `cardano-addresses.wasm` binary (~7MB) provides all cryptographic and a
 | `verify` | Ed25519 signature verification with extended public keys |
 | `bootstrap-address` | Legacy Byron and Icarus address construction from mnemonics or public keys |
 
-The WASM binary is built from [paolino/cardano-addresses](https://github.com/paolino/cardano-addresses/tree/001-wasm-target) using GHC's WASM backend (`wasm32-wasi-ghc` 9.12). It runs in the browser via [@bjorn3/browser_wasi_shim](https://github.com/aspect-build/aspect-workflows/tree/main/packages/browser_wasi_shim) which fakes WASI syscalls (stdin/stdout/stderr) in JavaScript.
+The WASM binary is built from [IntersectMBO/cardano-addresses](https://github.com/IntersectMBO/cardano-addresses) using GHC's WASM backend (`wasm32-wasi-ghc` 9.12). It runs in the browser via [@bjorn3/browser_wasi_shim](https://github.com/aspect-build/aspect-workflows/tree/main/packages/browser_wasi_shim) which fakes WASI syscalls (stdin/stdout/stderr) in JavaScript.
 
 Measured overhead: ~9ms one-time module compile, ~3ms per call (Shelley), ~13ms for legacy CBOR-heavy operations.
 
@@ -90,15 +90,16 @@ just ci                  # Full CI (format, build, test, playwright)
 
 ## WASM binary
 
-The WASM binary is not committed to this repo. It is built from [paolino/cardano-addresses](https://github.com/paolino/cardano-addresses/tree/001-wasm-target) and placed in `dist/wasm/`:
+The WASM binary is not committed to this repo. It is built from [IntersectMBO/cardano-addresses](https://github.com/IntersectMBO/cardano-addresses) and consumed as a Nix flake output:
 
 ```bash
-# In the cardano-addresses repo:
-wasm32-wasi-cabal --project-file=cabal-wasm.project build cardano-addresses-wasm
+# Build via Nix (used by CI and Playwright tests)
+nix build github:IntersectMBO/cardano-addresses#wasm
+ls result/cardano-addresses.wasm   # 7.0MB
 
-# Copy to this repo:
-cp dist-newstyle/build/wasm32-wasi/.../cardano-addresses-wasm.wasm \
-   ../cardano-addresses-browser/dist/wasm/cardano-addresses.wasm
+# For local development, copy to dist/wasm/
+mkdir -p dist/wasm
+cp result/cardano-addresses.wasm dist/wasm/
 ```
 
 ## Testing
