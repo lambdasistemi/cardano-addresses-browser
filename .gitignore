@@ -3,6 +3,7 @@ output/
 .spago/
 dist/app.js
 dist/cardano-addresses.js
+dist/wasm/
 .psa-stash/
 .psci_modules/
 WIP.md
