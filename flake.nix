@@ -18,17 +18,12 @@
       url = "github:paolino/purescript-overlay/fix/remove-nodePackages";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    ghc-wasm-meta = {
-      url = "gitlab:haskell-wasm/ghc-wasm-meta?host=gitlab.haskell.org";
-      flake = true;
-    };
-    cardano-addresses-src = {
+    cardano-addresses = {
       url = "github:paolino/cardano-addresses/001-wasm-target";
-      flake = false;
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, flake-parts, haskellNix, mkSpagoDerivation, purescript-overlay, ghc-wasm-meta, cardano-addresses-src, ... }:
+  outputs = inputs@{ self, nixpkgs, flake-parts, haskellNix, mkSpagoDerivation, purescript-overlay, cardano-addresses, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" ];
       perSystem = { system, ... }:
@@ -46,12 +41,7 @@
           haskellProject = import ./nix/project.nix {
             inherit indexState pkgs;
           };
-          wasmBuild = import ./nix/wasm.nix {
-            inherit pkgs;
-            ghcWasmToolchain = ghc-wasm-meta.packages.${system}.all_9_12;
-            cardanoAddressesSrc = cardano-addresses-src;
-            dependenciesHash = "sha256-1+NZ8RA5wCmiHsefwkqfGedNErgA8gM4cCG3V7q4Cik=";
-          };
+          wasmBinary = cardano-addresses.packages.${system}.wasm;
           playwrightBrowsers = pkgs.playwright-driver.browsers;
           test-vectors-json = pkgs.runCommand "cardano-addresses-browser-test-vectors" {} ''
             mkdir -p $out
@@ -65,7 +55,7 @@
             inherit pkgs repoRoot purescript haskellProject playwrightBrowsers testVectorsPath;
           };
           checks = import ./nix/checks {
-            inherit pkgs repoRoot purescript packages playwrightBrowsers testVectorsPath wasmBuild;
+            inherit pkgs repoRoot purescript packages playwrightBrowsers testVectorsPath wasmBinary;
           };
           apps = import ./nix/apps {
             inherit pkgs checks system;
@@ -75,8 +65,7 @@
           packages.playwright-browsers = playwrightBrowsers;
           packages.test-vectors-exe = haskellProject.packages.test-vectors-exe;
           packages.test-vectors = test-vectors-json;
-          packages.wasm = wasmBuild.wasm;
-          packages.wasm-deps = wasmBuild.deps;
+          packages.wasm = wasmBinary;
           packages.web-dist = packages.web-dist;
           checks = checks;
           inherit apps;

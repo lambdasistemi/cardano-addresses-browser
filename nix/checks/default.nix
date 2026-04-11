@@ -1,4 +1,4 @@
-{ pkgs, repoRoot, purescript, packages, playwrightBrowsers, testVectorsPath, wasmBuild }:
+{ pkgs, repoRoot, purescript, packages, playwrightBrowsers, testVectorsPath, wasmBinary }:
 
 {
   format = import ./format.nix { inherit pkgs repoRoot; };
@@ -7,5 +7,5 @@
   lib-build = import ./lib-build.nix { inherit purescript; };
   app-build = import ./app-build.nix { inherit purescript; };
   test = import ./test.nix { inherit purescript; };
-  playwright = import ./playwright.nix { inherit pkgs repoRoot purescript playwrightBrowsers wasmBuild; };
+  playwright = import ./playwright.nix { inherit pkgs repoRoot purescript playwrightBrowsers wasmBinary; };
 }

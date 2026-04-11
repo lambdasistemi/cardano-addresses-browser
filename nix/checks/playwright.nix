@@ -1,4 +1,4 @@
-{ pkgs, repoRoot, purescript, playwrightBrowsers, wasmBuild }:
+{ pkgs, repoRoot, purescript, playwrightBrowsers, wasmBinary }:
 
 pkgs.runCommand "cardano-addresses-browser-playwright-check"
   {
@@ -18,7 +18,7 @@ pkgs.runCommand "cardano-addresses-browser-playwright-check"
     mkdir -p dist/wasm
     cp ${purescript.web-dist}/index.html dist/index.html
     cp ${purescript.web-dist}/app.js dist/app.js
-    cp ${wasmBuild.wasm}/cardano-addresses.wasm dist/wasm/cardano-addresses.wasm
+    cp ${wasmBinary}/cardano-addresses.wasm dist/wasm/cardano-addresses.wasm
     export HOME=$(mktemp -d)
     export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
     export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
