@@ -49,7 +49,7 @@
           '';
           testVectorsPath = test-vectors-json;
           purescript = import ./nix/purescript.nix {
-            inherit pkgs repoRoot;
+            inherit pkgs repoRoot wasmBinary;
           };
           packages = import ./nix/packages {
             inherit pkgs repoRoot purescript haskellProject playwrightBrowsers testVectorsPath;

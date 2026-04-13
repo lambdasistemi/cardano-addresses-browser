@@ -213,11 +213,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1775882010,
+        "lastModified": 1776072124,
         "narHash": "sha256-ZTD/BHZBzJXvVSByGDbNGxhksqclAS0R5MW7N+TiLMc=",
         "owner": "paolino",
         "repo": "cardano-addresses",
-        "rev": "55a30aaa6ad397d131b105faca7a5e2672f9b1bc",
+        "rev": "7a4f2b572e1aaa735cbcf93e3070f3beeda48b0f",
         "type": "github"
       },
       "original": {

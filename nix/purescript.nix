@@ -1,4 +1,4 @@
-{ pkgs, repoRoot }:
+{ pkgs, repoRoot, wasmBinary }:
 
 let
   nodejs = pkgs.nodejs_22;
@@ -134,9 +134,10 @@ in
       cd ..
     '';
     installPhase = ''
-      mkdir -p $out
+      mkdir -p $out/wasm
       cp ${repoRoot}/dist/index.html $out/index.html
       cp dist/app.js $out/
+      cp ${wasmBinary}/cardano-addresses.wasm $out/wasm/cardano-addresses.wasm
     '';
   };
 }
