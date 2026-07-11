@@ -1,5 +1,7 @@
 # cardano-addresses-browser
 
+> **Superseded by [cardano-swiss-knife](https://github.com/lambdasistemi/cardano-swiss-knife).** That repo is a strict superset of this one (same app shell, same features) plus vault-backed transaction signing and witness attachment. This repo is no longer actively developed; the GitHub Pages site stays up as-is. Open backlog issues have moved to `cardano-swiss-knife`.
+
 Browser-based Cardano address toolkit. Mnemonic generation, key derivation, address construction, inspection, signing — all running client-side with no backend.
 
 ## Architecture
