@@ -607,6 +607,31 @@
     </style>
   </head>
   <body>
+    <div
+      style="
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5em 1em;
+        align-items: center;
+        justify-content: center;
+        padding: 0.6em 1em;
+        background: var(--accent-soft);
+        border-bottom: 1px solid var(--border);
+        color: var(--text);
+        font-size: 0.9em;
+        text-align: center;
+      "
+    >
+      <span>
+        This project is superseded by
+        <a href="https://lambdasistemi.github.io/cardano-swiss-knife/" style="color: var(--accent); font-weight: 600;">cardano-swiss-knife</a>,
+        which includes everything here plus transaction signing and witness attachment. This page stays up, but new work happens there.
+      </span>
+    </div>
+    <div id="app-root"></div>
     <script>
       globalThis.global = globalThis;
       globalThis.process = globalThis.process ?? { env: {}, browser: true };
